@@ -460,6 +460,21 @@ tr:last-child td { border-bottom: 0; }
         for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
       }
     }
+    // The province is a small line under big characters; read the bottom band on its own as a single line.
+    if (!prov || prov.score < 0.85) {
+      const [bx0, by0, bw0, bh0] = box;
+      const band = clampBox(src, bx0 + bw0 * 0.06, by0 + bh0 * 0.55, bw0 * 0.88, bh0 * 0.4);
+      for (const psm of ["7", "6"]) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm });
+        for (const th of [44, 60, 80, 110]) {
+          const { canvas } = prep(src, ...band, th);
+          const { data } = await worker.recognize(canvas);
+          texts.push(data.text);
+          for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
+        }
+        if (prov && prov.score >= 0.85) break;
+      }
+    }
     await worker.setParameters({ tessedit_pageseg_mode: "11" });
     const raw = texts.map(t => t.trim().replace(/\n+/g, " / ")).filter(Boolean)[0] || "";
     if (!cands.length) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
@@ -560,8 +575,12 @@ tr:last-child td { border-bottom: 0; }
         }
         lastRaw = texts.sort((a, b) => b.length - a.length)[0] || "";
         for (const f of found.filter(f => f.strict && f.conf >= 0.5)) {
+          // a text-only hit may cover just the number line; grow the box down to take in the province line
+          const [fx, fy, fw, fh] = f.box;
+          const plateBox = f.hasProv ? f.box : clampBox(source, fx - fw * 0.1, fy - fh * 0.3, fw * 1.2, fh * 2.6);
           const p = await readPlate(source, f.box);
-          plates.push({ ...p, text: p.text || f.text, box: f.box, det: null, viaText: true });
+          if (!p.prov && plateBox !== f.box) { const q = await readPlate(source, plateBox); p.prov = q.prov; }
+          plates.push({ ...p, text: p.text || f.text, box: plateBox, det: null, viaText: true });
         }
       }
       setStep("ocr", "done", performance.now() - t);
