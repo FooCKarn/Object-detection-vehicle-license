@@ -267,7 +267,7 @@ tr:last-child td { border-bottom: 0; }
   const bar = document.getElementById("bar");
   const flag = document.getElementById("engineFlag");
   const libBase = new URL("lib/", location.href).href;
-  let worker = null, loading = true;
+  let worker = null, digitWorker = null, loading = true;
   const ready = (async () => {
     worker = await Tesseract.createWorker("tha", 1, {
       workerPath: libBase + "worker.min.js",
@@ -276,6 +276,9 @@ tr:last-child td { border-bottom: 0; }
       logger: m => { if (loading && m.status && m.progress != null) bar.style.width = Math.round(m.progress * 100) + "%"; }
     });
     await worker.setParameters({ preserve_interword_spaces: "1", tessedit_pageseg_mode: "11" });
+    // The Thai model reads tall, condensed plate digits as Thai letters (9912 -> เฑว); English reads them reliably.
+    digitWorker = await Tesseract.createWorker("eng", 1, { workerPath: libBase + "worker.min.js", corePath: libBase, langPath: libBase + "lang" });
+    await digitWorker.setParameters({ tessedit_pageseg_mode: "7" });
     flag.style.borderColor = "var(--ok)"; flag.style.color = "var(--ok)";
     loading = false; bar.style.width = "0";
   })();
@@ -297,8 +300,8 @@ tr:last-child td { border-bottom: 0; }
   });
 
   // Upscale, grayscale and stretch contrast. Returns a canvas.
-  function prep(src, sx, sy, sw, sh, targetH) {
-    const k = Math.min(4, targetH / sh);
+  function prep(src, sx, sy, sw, sh, targetH, opts = {}) {
+    const k = Math.min(opts.maxScale || 4, targetH / sh);
     const c = document.createElement("canvas"); c.width = Math.round(sw * k); c.height = Math.round(sh * k);
     const g = c.getContext("2d", { willReadFrequently: true });
     g.imageSmoothingQuality = "high"; g.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
@@ -310,24 +313,58 @@ tr:last-child td { border-bottom: 0; }
     for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > n * 0.02) { lo = v; break; } }
     acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > n * 0.02) { hi = v; break; } }
     const span = Math.max(1, hi - lo);
-    for (let i = 0; i < gray.length; i++) { const v = Math.max(0, Math.min(255, (gray[i] - lo) * 255 / span)); d[i*4] = d[i*4+1] = d[i*4+2] = v; }
+    for (let i = 0; i < gray.length; i++) gray[i] = Math.max(0, Math.min(255, (gray[i] - lo) * 255 / span));
+    if (opts.trim) {
+      // paint dark edge rows/columns (plate frame, bumper) white, up to a quarter of each side
+      const W2 = c.width, H2 = c.height;
+      const colMean = x => { let t = 0; for (let y = 0; y < H2; y++) t += gray[y * W2 + x]; return t / H2; };
+      const rowMean = y => { let t = 0; for (let x = 0; x < W2; x++) t += gray[y * W2 + x]; return t / W2; };
+      const wipeCol = x => { for (let y = 0; y < H2; y++) gray[y * W2 + x] = 255; };
+      const wipeRow = y => { for (let x = 0; x < W2; x++) gray[y * W2 + x] = 255; };
+      for (let x = 0; x < W2 * 0.25 && colMean(x) < 110; x++) wipeCol(x);
+      for (let x = W2 - 1; x > W2 * 0.75 && colMean(x) < 110; x--) wipeCol(x);
+      for (let y = 0; y < H2 * 0.25 && rowMean(y) < 110; y++) wipeRow(y);
+      for (let y = H2 - 1; y > H2 * 0.75 && rowMean(y) < 110; y--) wipeRow(y);
+    }
+    if (opts.bin) {
+      // Otsu threshold: pure black text on white, which keeps coloured plates (red, yellow, green) readable
+      const h2 = new Float64Array(256); gray.forEach(v => h2[v]++);
+      let sum = 0; for (let v = 0; v < 256; v++) sum += v * h2[v];
+      let sB = 0, wB = 0, best = -1, th = 128;
+      for (let v = 0; v < 256; v++) {
+        wB += h2[v]; if (!wB) continue; const wF = n - wB; if (!wF) break;
+        sB += v * h2[v]; const between = wB * wF * (sB / wB - (sum - sB) / wF) ** 2;
+        if (between > best) { best = between; th = v; }
+      }
+      for (let i = 0; i < gray.length; i++) gray[i] = gray[i] > th ? 255 : 0;
+    }
+    for (let i = 0; i < gray.length; i++) d[i*4] = d[i*4+1] = d[i*4+2] = gray[i];
     g.putImageData(im, 0, 0);
-    return { canvas: c, k };
+    if (!opts.pad) return { canvas: c, k };
+    // white margin: Tesseract misreads characters that touch the image edge
+    const P = Math.round(c.height * opts.pad), out = document.createElement("canvas");
+    out.width = c.width + 2 * P; out.height = c.height + 2 * P;
+    const og = out.getContext("2d"); og.fillStyle = "#fff"; og.fillRect(0, 0, out.width, out.height); og.drawImage(c, P, P);
+    return { canvas: out, k };
   }
 
   // ---------- Text matching ----------
   const THAI_DIG = "๐๑๒๓๔๕๖๗๘๙";
+  const PLATE_CHARS = "กขฃคฅฆงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมยรลวศษสหฬอฮ0123456789- ";
   function clean(t) {
     return t.replace(/[๐-๙]/g, ch => THAI_DIG.indexOf(ch))
-      .replace(/[Oo]/g, "0").replace(/[Il|]/g, "1")
+      .replace(/[|\[\]{}!]/g, " ")
+      .replace(/[Oo]/g, "0").replace(/[Il]/g, "1")
       .replace(/(?<=[ก-๛])\s+(?=[ก-๛])/g, "")
       .replace(/(?<=\d)\s+(?=\d)/g, "")
       .trim();
   }
-  const PLATE_RE = /(?:^|[^ก-๛\d])(\d?[ก-ฮ]{1,2})\s*(\d{1,4})(?!\d)/;
+  // optional leading digit, 1-2 consonants, optional "-" (red plates), 1-4 digits
+  const PLATE_RE = /(?:^|[^ก-๛\d])(\d?[ก-ฮ]{1,2})\s*[-–.]?\s*(\d{1,4})(?!\d)/;
   const LOOSE_RE = /(\d?[ก-ฮ]{1,3})\s*(\d{1,5})/;
   function matchPlate(text) {
-    const t = clean(text);
+    // plate prefixes never carry vowels or tone marks; OCR often adds a stray one (ละ8912)
+    const t = clean(text).replace(/[\u0E30-\u0E3A\u0E40-\u0E4E]/g, "");
     let m = t.match(PLATE_RE);
     if (m) return { text: `${m[1]} ${m[2]}`, score: m[2].length >= 2 ? 1 : 0.6, digits: m[2].length, strict: true };
     m = t.match(LOOSE_RE);
@@ -450,7 +487,7 @@ tr:last-child td { border-bottom: 0; }
   // Read one plate crop several times (two layout modes x four sizes) and vote character by character.
   async function readPlate(src, [x, y, w, h]) {
     const box = clampBox(src, x - w * 0.04, y - h * 0.06, w * 1.08, h * 1.12);
-    const cands = [], texts = []; let prov = null;
+    const cands = [], texts = []; let prov = null, hyphens = 0;
     for (const psm of ["11", "6"]) {
       await worker.setParameters({ tessedit_pageseg_mode: psm });
       for (const th of [90, 120, 150, 190]) {
@@ -461,38 +498,74 @@ tr:last-child td { border-bottom: 0; }
         for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
       }
     }
+    // The number line read on its own as one line: Thai for the letters, English for the digits.
+    const digitReads = [];
+    {
+      const [bx0, by0, bw0, bh0] = box;
+      await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: PLATE_CHARS });
+      for (const [top, hgt] of [[0.04, 0.58], [0.12, 0.48]])
+      for (const bin of [false, true]) for (const th of [40, 56, 72]) {
+        const band = clampBox(src, bx0 + bw0 * 0.03, by0 + bh0 * top, bw0 * 0.94, bh0 * hgt);
+        const { canvas } = prep(src, ...band, th, { bin, trim: true, pad: 0.2, maxScale: 8 });
+        const { data } = await worker.recognize(canvas);
+        texts.push(data.text);
+        if (/[ก-ฮ]\s*-\s*\d/.test(data.text)) hyphens++;
+        const m = matchPlate(data.text); if (m && m.strict) cands.push({ text: m.text, w: Math.max(0.05, (data.confidence || 0) / 100) });
+        const e = (await digitWorker.recognize(canvas)).data;
+        const dm = e.text.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/(?<=\d)\s+(?=\d)/g, "").match(/(\d{1,4})[^\d]*$/);
+        if (dm) digitReads.push({ digits: dm[1], w: Math.max(0.05, (e.confidence || 0) / 100) });
+        if (/[A-Za-z]\s*-\s*\d/.test(e.text)) hyphens++;
+      }
+      await worker.setParameters({ tessedit_char_whitelist: "" });
+    }
     // The province is a small line under big characters; read the bottom band on its own as a single line.
     if (!prov || prov.score < 0.85) {
       const [bx0, by0, bw0, bh0] = box;
-      const band = clampBox(src, bx0 + bw0 * 0.06, by0 + bh0 * 0.55, bw0 * 0.88, bh0 * 0.4);
+      // two bands: the usual province strip, and a narrower one for plates in a dealer frame with text below
+      outer: for (const [top, hgt] of [[0.55, 0.4], [0.5, 0.26]])
       for (const psm of ["7", "6"]) {
+        const band = clampBox(src, bx0 + bw0 * 0.06, by0 + bh0 * top, bw0 * 0.88, bh0 * hgt);
         await worker.setParameters({ tessedit_pageseg_mode: psm });
-        for (const th of [44, 60, 80, 110]) {
-          const { canvas } = prep(src, ...band, th);
+        for (const [th, bin] of [[44, false], [60, false], [80, false], [110, false], [60, true], [80, true]]) {
+          const { canvas } = prep(src, ...band, th, { bin, trim: true, pad: 0.15, maxScale: 8 });
           const { data } = await worker.recognize(canvas);
           texts.push(data.text);
           for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
         }
-        if (prov && prov.score >= 0.85) break;
+        if (prov && prov.score >= 0.85) break outer;
       }
     }
     await worker.setParameters({ tessedit_pageseg_mode: "11" });
     const raw = texts.map(t => t.trim().replace(/\n+/g, " / ")).filter(Boolean)[0] || "";
     if (!cands.length) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
-    // group reads by shape (same length), take the heaviest group, then majority per character position
-    const groups = new Map();
-    for (const c of cands) { const k = c.text.length; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
-    const total = cands.reduce((a, c) => a + c.w, 0);
-    const group = [...groups.values()].sort((a, b) => b.reduce((s, c) => s + c.w, 0) - a.reduce((s, c) => s + c.w, 0))[0];
-    let text = "";
-    for (let i = 0; i < group[0].text.length; i++) {
-      const tally = new Map();
-      for (const c of group) tally.set(c.text[i], (tally.get(c.text[i]) || 0) + c.w);
-      text += [...tally].sort((a, b) => b[1] - a[1])[0][0];
-    }
-    const agree = cands.filter(c => c.text === text).reduce((a, c) => a + c.w, 0) / total;
+    // vote the letter prefix and the number separately, character by character within the most common length
+    const vote = items => {
+      const groups = new Map();
+      for (const c of items) { const k = c.v.length; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+      const group = [...groups.values()].sort((a, b) => b.reduce((t, c) => t + c.w, 0) - a.reduce((t, c) => t + c.w, 0))[0];
+      let out = "";
+      for (let i = 0; i < group[0].v.length; i++) {
+        const tally = new Map();
+        for (const c of group) tally.set(c.v[i], (tally.get(c.v[i]) || 0) + c.w);
+        out += [...tally].sort((a, b) => b[1] - a[1])[0][0];
+      }
+      return out;
+    };
+    const split = t => { const [p, d] = t.split(" "); return { p, d }; };
+    const prefix = vote(cands.map(c => ({ v: split(c.text).p, w: c.w })));
+    // English digit reads count double: they are the reliable source for the number
+    const digitItems = [...cands.map(c => ({ v: split(c.text).d, w: c.w })), ...digitReads.map(r => ({ v: r.digits, w: r.w * 2 }))];
+    const digits = vote(digitItems);
+    let text = `${prefix} ${digits}`;
+    const totalD = digitItems.reduce((a, c) => a + c.w, 0), totalP = cands.reduce((a, c) => a + c.w, 0);
+    const agree = Math.min(
+      cands.filter(c => split(c.text).p === prefix).reduce((a, c) => a + c.w, 0) / totalP,
+      digitItems.filter(c => c.v === digits).reduce((a, c) => a + c.w, 0) / totalD);
     const counts = new Map(); cands.forEach(c => counts.set(c.text, (counts.get(c.text) || 0) + 1));
-    return { text, ocr: agree, votes: [...counts].sort((a, b) => b[1] - a[1]), prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
+    const dcounts = new Map(); digitReads.forEach(r => dcounts.set(r.digits, (dcounts.get(r.digits) || 0) + 1));
+    const votes = [...[...counts].sort((a, b) => b[1] - a[1]), ...[...dcounts].sort((a, b) => b[1] - a[1]).map(([d, n]) => [`ตัวเลข ${d}`, n])];
+    if (hyphens >= 2) text = text.replace(" ", "-"); // red plates print a dash: ล-9912
+    return { text, ocr: agree, votes, prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
   }
 
   // OCR one region of the source; returns plates with boxes in source coordinates.
