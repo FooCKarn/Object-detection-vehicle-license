@@ -384,6 +384,8 @@ tr:last-child td { border-bottom: 0; }
     if (t.length < 2) return null;
     let best = null;
     for (const p of PROVINCES) {
+      // a short name (เลย, ตราด) found inside a long garbled line is usually a coincidence
+      if (p.length <= 4 && t.length > p.length + 3) continue;
       // compare against every window of the line roughly the province's length
       for (let L = Math.max(2, p.length - 2); L <= Math.min(t.length, p.length + 2); L++)
         for (let s = 0; s + L <= t.length; s++) {
@@ -525,7 +527,7 @@ tr:last-child td { border-bottom: 0; }
       }
       // glyph-sized: a fifth to two thirds of the plate height, not a frame bar or a wide strip
       const cand = blobs.filter(b => b.bh >= H * 0.2 && b.bh <= H * 0.68 && b.bw <= W * 0.25 && b.bw >= b.bh * 0.12 &&
-        b.px.length >= b.bw * b.bh * 0.12 && b.x0 > 0 && b.x1 < W - 1);
+        b.px.length >= b.bw * b.bh * (b.bw < b.bh * 0.36 ? 0.5 : 0.12) && b.x0 > 0 && b.x1 < W - 1); // a thin glyph (1) is solid, a frame sliver is not
       // the registration line is the largest set of blobs with about the same height on one baseline
       let row = [];
       for (const a of cand) {
@@ -633,7 +635,7 @@ tr:last-child td { border-bottom: 0; }
         const asDigit = [];
         for (const gl of seg.glyphs) {
           // Tesseract often returns nothing for a lone "1"; no Thai consonant is this narrow
-          if (gl.bw < gl.bh * 0.36) { asDigit.push({ t: "1", c: 0.9 }); continue; }
+          if (gl.bw < gl.bh * 0.36 && gl.px.length >= gl.bw * gl.bh * 0.5) { asDigit.push({ t: "1", c: 0.9 }); continue; }
           // single-character mode sometimes returns nothing; retry at other sizes, then as a one-word line
           let got = { t: "", c: 0 };
           for (const [psm, size] of [["10", 48], ["10", 34], ["10", 64], ["8", 48]]) {
@@ -709,14 +711,19 @@ tr:last-child td { border-bottom: 0; }
       return w >= total * 0.4 ? best : vote(items);
     };
     const split = t => { const [p, d] = t.split(" "); return { p, d }; };
-    const prefixItems = cands.map(c => ({ v: split(c.text).p, w: c.w }));
-    if (glyphPrefix) prefixItems.push({ v: glyphPrefix.v, w: glyphPrefix.w * 4 });
-    const prefix = voteWhole(prefixItems);
-    // English digit reads count double: they are the reliable source for the number
+
     // English digit reads count double: the Thai model often reads a 9 as 0 or 8
     const digitItems = [...cands.map(c => ({ v: split(c.text).d, w: c.w })), ...digitReads.map(r => ({ v: r.digits, w: r.w * 2 }))];
-    // each digit read alone from a clean glyph is the strongest single source
+    // each digit read alone from a clean glyph is the strongest single source, but only when the glyphs
+    // agree with the other reads on how long the number is (two touching glyphs would drop a digit)
+    const lenW = new Map(); digitItems.forEach(c => lenW.set(c.v.length, (lenW.get(c.v.length) || 0) + c.w));
+    const usualLen = [...lenW].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (glyphDigits && glyphDigits.digits.length !== usualLen && glyphDigits.digits.length < 4) glyphDigits = glyphPrefix = null;
     if (glyphDigits) digitItems.push({ v: glyphDigits.digits, w: glyphDigits.w * 6 });
+    const prefixItems = cands.map(c => ({ v: split(c.text).p, w: c.w }));
+    if (glyphPrefix) prefixItems.push({ v: glyphPrefix.v, w: glyphPrefix.w * 4 });
+    if (!prefixItems.length) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
+    const prefix = voteWhole(prefixItems);
     const digits = voteWhole(digitItems);
     let text = `${prefix} ${digits}`;
     const totalD = digitItems.reduce((a, c) => a + c.w, 0), totalP = cands.reduce((a, c) => a + c.w, 0);
