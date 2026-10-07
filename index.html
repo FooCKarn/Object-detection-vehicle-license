@@ -272,7 +272,8 @@ tr:last-child td { border-bottom: 0; }
     worker = await Tesseract.createWorker("tha", 1, {
       workerPath: libBase + "worker.min.js",
       corePath: libBase,
-      langPath: libBase + "lang",
+      // tessdata_best Thai (float LSTM): slower than best_int but noticeably more accurate on plate glyphs
+      langPath: libBase + "lang/best", cachePath: "tha-best",
       logger: m => { if (loading && m.status && m.progress != null) bar.style.width = Math.round(m.progress * 100) + "%"; }
     });
     await worker.setParameters({ preserve_interword_spaces: "1", tessedit_pageseg_mode: "11" });
@@ -484,6 +485,79 @@ tr:last-child td { border-bottom: 0; }
     return boxes.sort((a, b) => b.det - a.det);
   }
 
+  // Split the plate into glyphs: threshold, find connected dark blobs, and keep the tall ones on the
+  // registration line. The frame, screws, dealer text and the small province line all fall away.
+  function segmentRow(src, [x, y, w, h]) {
+    const H = 160, k = H / h, W = Math.max(8, Math.round(w * k));
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high";
+    g.drawImage(src, x, y, w, h, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data, n = W * H, gray = new Uint8Array(n);
+    for (let i = 0; i < n; i++) gray[i] = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114;
+    const hist = new Float64Array(256); gray.forEach(v => hist[v]++);
+    let sum = 0; for (let v = 0; v < 256; v++) sum += v * hist[v];
+    let sB = 0, wB = 0, best = -1, otsu = 128;
+    for (let v = 0; v < 256; v++) { wB += hist[v]; if (!wB) continue; const wF = n - wB; if (!wF) break;
+      sB += v * hist[v]; const b = wB * wF * (sB / wB - (sum - sB) / wF) ** 2; if (b > best) { best = b; otsu = v; } }
+    let bestRow = null;
+    for (const f of [1, 0.85, 0.7, 1.15]) {
+      const th = otsu * f, lab = new Int32Array(n).fill(-1), blobs = [], dark = new Uint8Array(n);
+      for (let i = 0; i < n; i++) dark[i] = gray[i] <= th ? 1 : 0;
+      // erase long straight runs (the plate frame and its edges) so glyphs touching it come loose
+      const keep = dark.slice();
+      for (let yy = 0; yy < H; yy++) for (let xx = 0, r = 0; xx <= W; xx++) {
+        if (xx < W && dark[yy*W+xx]) { r++; continue; }
+        if (r >= W * 0.35) for (let t = xx - r; t < xx; t++) keep[yy*W+t] = 0; r = 0; }
+      for (let xx = 0; xx < W; xx++) for (let yy = 0, r = 0; yy <= H; yy++) {
+        if (yy < H && dark[yy*W+xx]) { r++; continue; }
+        if (r >= H * 0.7) for (let t = yy - r; t < yy; t++) keep[t*W+xx] = 0; r = 0; }
+      for (let i = 0; i < n; i++) {
+        if (lab[i] >= 0 || !keep[i]) continue;
+        const id = blobs.length, st = [i], px = []; lab[i] = id;
+        let x0 = W, y0 = H, x1 = 0, y1 = 0;
+        while (st.length) {
+          const j = st.pop(), jx = j % W, jy = (j / W) | 0; px.push(j);
+          if (jx < x0) x0 = jx; if (jx > x1) x1 = jx; if (jy < y0) y0 = jy; if (jy > y1) y1 = jy;
+          for (const q of [jx > 0 ? j - 1 : -1, jx < W - 1 ? j + 1 : -1, j - W, j + W])
+            if (q >= 0 && q < n && lab[q] < 0 && keep[q]) { lab[q] = id; st.push(q); }
+        }
+        blobs.push({ x0, y0, x1, y1, px, bw: x1 - x0 + 1, bh: y1 - y0 + 1 });
+      }
+      // glyph-sized: a fifth to two thirds of the plate height, not a frame bar or a wide strip
+      const cand = blobs.filter(b => b.bh >= H * 0.2 && b.bh <= H * 0.68 && b.bw <= W * 0.25 && b.bw >= b.bh * 0.12 &&
+        b.px.length >= b.bw * b.bh * 0.12 && b.x0 > 0 && b.x1 < W - 1);
+      // the registration line is the largest set of blobs with about the same height on one baseline
+      let row = [];
+      for (const a of cand) {
+        const cy = (a.y0 + a.y1) / 2;
+        const set = cand.filter(b => Math.abs(b.bh - a.bh) <= a.bh * 0.2 && Math.abs((b.y0 + b.y1) / 2 - cy) <= a.bh * 0.3);
+        if (set.length > row.length || (set.length === row.length && a.bh > row[0].bh)) row = set;
+      }
+      row.sort((a, b) => a.x0 - b.x0);
+      if (row.length < 2 || row.length > 8 || (bestRow && row.length <= bestRow.glyphs.length)) continue;
+      // a short wide blob halfway up the line is the dash of a red plate (ล-9912)
+      const rh = Math.max(...row.map(b => b.bh)), rc = row.reduce((a, b) => a + (b.y0 + b.y1) / 2, 0) / row.length;
+      const dashes = blobs.filter(b => b.bh < rh * 0.3 && b.bw >= rh * 0.15 && b.bw <= rh * 0.7 && b.bw >= b.bh * 0.9 &&
+        Math.abs((b.y0 + b.y1) / 2 - rc) < rh * 0.2);
+      bestRow = { glyphs: row, dashes, W, H };
+    }
+    return bestRow;
+  }
+  // Draw glyphs black on white, scaled so the tallest is targetH px, with even padding.
+  function renderGlyphs(seg, glyphs, targetH) {
+    const x0 = Math.min(...glyphs.map(b => b.x0)), x1 = Math.max(...glyphs.map(b => b.x1));
+    const y0 = Math.min(...glyphs.map(b => b.y0)), y1 = Math.max(...glyphs.map(b => b.y1));
+    const k = targetH / (y1 - y0 + 1), P = Math.round(targetH * 0.35);
+    const sw = x1 - x0 + 1, sh = y1 - y0 + 1, m = document.createElement("canvas"); m.width = sw; m.height = sh;
+    const mg = m.getContext("2d"), im = mg.createImageData(sw, sh); im.data.fill(255);
+    for (const b of glyphs) for (const j of b.px) { const o = (((j / seg.W) | 0) - y0) * sw + (j % seg.W) - x0; im.data[o*4] = im.data[o*4+1] = im.data[o*4+2] = 0; }
+    mg.putImageData(im, 0, 0);
+    const c = document.createElement("canvas"); c.width = Math.round(sw * k) + 2 * P; c.height = Math.round(sh * k) + 2 * P;
+    const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+    g.imageSmoothingQuality = "high"; g.drawImage(m, P, P, c.width - 2 * P, c.height - 2 * P);
+    return c;
+  }
+
   // Horizontal extent of the last run of digit-like symbols in an English OCR result.
   function digitSpan(data) {
     const syms = (data.symbols || []).filter(x => x.text.trim());
@@ -511,7 +585,7 @@ tr:last-child td { border-bottom: 0; }
       }
     }
     // The number line read on its own as one line: Thai for the letters, English for the digits.
-    const digitReads = [];
+    const digitReads = []; let glyphDigits = null, glyphPrefix = null;
     {
       const [bx0, by0, bw0, bh0] = box;
       await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: PLATE_CHARS });
@@ -542,6 +616,56 @@ tr:last-child td { border-bottom: 0; }
           if (/^\d{1,4}$/.test(d2) && e2.confidence >= 30) digitReads.push({ digits: d2, w: e2.confidence / 100 });
         }
       }
+      // Clean glyphs only: read the whole line, then each digit on its own.
+      const seg = segmentRow(src, box);
+      if (seg) {
+        for (const th of [44, 64]) {
+          const row = renderGlyphs(seg, seg.glyphs, th);
+          const { data } = await worker.recognize(row);
+          texts.push(data.text);
+          const m = matchPlate(data.text); if (m && m.strict) cands.push({ text: m.text, w: Math.max(0.05, (data.confidence || 0) / 100) });
+          const e = (await digitWorker.recognize(row)).data;
+          const dm = e.text.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/\s+/g, "").match(/(\d{1,4})[^\d]*$/);
+          if (dm && e.confidence >= 30) digitReads.push({ digits: dm[1], w: e.confidence / 100 });
+        }
+        // classify each glyph as a digit; the trailing run of confident digits is the number
+        await digitWorker.setParameters({ tessedit_pageseg_mode: "10", tessedit_char_whitelist: "0123456789" });
+        const asDigit = [];
+        for (const gl of seg.glyphs) {
+          // Tesseract often returns nothing for a lone "1"; no Thai consonant is this narrow
+          if (gl.bw < gl.bh * 0.36) { asDigit.push({ t: "1", c: 0.9 }); continue; }
+          // single-character mode sometimes returns nothing; retry at other sizes, then as a one-word line
+          let got = { t: "", c: 0 };
+          for (const [psm, size] of [["10", 48], ["10", 34], ["10", 64], ["8", 48]]) {
+            await digitWorker.setParameters({ tessedit_pageseg_mode: psm });
+            const e = (await digitWorker.recognize(renderGlyphs(seg, [gl], size))).data, t = e.text.trim();
+            if (/^\d$/.test(t)) { got = { t, c: e.confidence / 100 }; break; }
+          }
+          asDigit.push(got);
+        }
+        await digitWorker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "" });
+        let nd = 0;
+        while (nd < 4 && nd < seg.glyphs.length - 1 && asDigit[seg.glyphs.length - 1 - nd].t && asDigit[seg.glyphs.length - 1 - nd].c >= 0.6) nd++;
+        if (nd > 0) {
+          const run = asDigit.slice(-nd);
+          glyphDigits = { digits: run.map(r => r.t).join(""), w: run.reduce((a, r) => a + r.c, 0) / nd };
+          const firstDigit = seg.glyphs[seg.glyphs.length - nd], lastLead = seg.glyphs[seg.glyphs.length - nd - 1];
+          if (seg.dashes.some(b => b.x0 >= lastLead.x1 && b.x1 <= firstDigit.x0)) hyphens += 2;
+          // and the letters in front of them, one by one with the Thai model
+          const lead = seg.glyphs.slice(0, -nd);
+          if (lead.length && lead.length <= 3) {
+            await worker.setParameters({ tessedit_pageseg_mode: "10", tessedit_char_whitelist: PLATE_CHARS.replace(/[- ]/g, "") });
+            let pre = "", pc = 0;
+            for (const gl of lead) {
+              const r = (await worker.recognize(renderGlyphs(seg, [gl], 48))).data, t = r.text.trim();
+              if (!/^[ก-ฮ0-9]$/.test(t)) { pre = ""; break; }
+              pre += t; pc += r.confidence / 100 / lead.length;
+            }
+            await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: PLATE_CHARS });
+            if (/^\d?[ก-ฮ]{1,2}$/.test(pre)) glyphPrefix = { v: pre, w: pc };
+          }
+        }
+      }
       await worker.setParameters({ tessedit_char_whitelist: "" });
     }
     // The province is a small line under big characters; read the bottom band on its own as a single line.
@@ -563,7 +687,7 @@ tr:last-child td { border-bottom: 0; }
     }
     await worker.setParameters({ tessedit_pageseg_mode: "11" });
     const raw = texts.map(t => t.trim().replace(/\n+/g, " / ")).filter(Boolean)[0] || "";
-    if (!cands.length) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
+    if (!cands.length && !(glyphPrefix && glyphDigits)) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
     // vote the letter prefix and the number separately, character by character within the most common length
     const vote = items => {
       const groups = new Map();
@@ -585,19 +709,24 @@ tr:last-child td { border-bottom: 0; }
       return w >= total * 0.4 ? best : vote(items);
     };
     const split = t => { const [p, d] = t.split(" "); return { p, d }; };
-    const prefix = vote(cands.map(c => ({ v: split(c.text).p, w: c.w })));
+    const prefixItems = cands.map(c => ({ v: split(c.text).p, w: c.w }));
+    if (glyphPrefix) prefixItems.push({ v: glyphPrefix.v, w: glyphPrefix.w * 4 });
+    const prefix = voteWhole(prefixItems);
     // English digit reads count double: they are the reliable source for the number
     // English digit reads count double: the Thai model often reads a 9 as 0 or 8
     const digitItems = [...cands.map(c => ({ v: split(c.text).d, w: c.w })), ...digitReads.map(r => ({ v: r.digits, w: r.w * 2 }))];
+    // each digit read alone from a clean glyph is the strongest single source
+    if (glyphDigits) digitItems.push({ v: glyphDigits.digits, w: glyphDigits.w * 6 });
     const digits = voteWhole(digitItems);
     let text = `${prefix} ${digits}`;
     const totalD = digitItems.reduce((a, c) => a + c.w, 0), totalP = cands.reduce((a, c) => a + c.w, 0);
     const agree = Math.min(
-      cands.filter(c => split(c.text).p === prefix).reduce((a, c) => a + c.w, 0) / totalP,
+      prefixItems.filter(c => c.v === prefix).reduce((a, c) => a + c.w, 0) / prefixItems.reduce((a, c) => a + c.w, 0),
       digitItems.filter(c => c.v === digits).reduce((a, c) => a + c.w, 0) / totalD);
     const counts = new Map(); cands.forEach(c => counts.set(c.text, (counts.get(c.text) || 0) + 1));
     const dcounts = new Map(); digitReads.forEach(r => dcounts.set(r.digits, (dcounts.get(r.digits) || 0) + 1));
-    const votes = [...[...counts].sort((a, b) => b[1] - a[1]), ...[...dcounts].sort((a, b) => b[1] - a[1]).map(([d, n]) => [`ตัวเลข ${d}`, n])];
+    const votes = [...[...counts].sort((a, b) => b[1] - a[1]), ...[...dcounts].sort((a, b) => b[1] - a[1]).map(([d, n]) => [`ตัวเลข ${d}`, n]),
+      ...(glyphDigits ? [[`แยกตัว ${glyphPrefix ? glyphPrefix.v + " " : ""}${glyphDigits.digits}`, 1]] : [])];
     if (hyphens >= 2) text = text.replace(" ", "-"); // red plates print a dash: ล-9912
     return { text, ocr: agree, votes, prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
   }
