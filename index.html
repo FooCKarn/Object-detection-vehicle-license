@@ -168,7 +168,7 @@ tr:last-child td { border-bottom: 0; }
         <div class="panel-h"><span class="eyebrow">Pipeline</span><span class="ms" id="total"></span></div>
         <ol class="pipe" id="pipe">
           <li data-k="det"><span class="dot"></span><span>ตรวจจับป้ายทะเบียน<small>YOLOv9-t pretrained (open-image-models) · 640×640</small></span><span class="ms"></span></li>
-          <li data-k="ocr"><span class="dot"></span><span>อ่านตัวอักษรในกรอบ<small>Tesseract ไทย · อ่าน 8 รอบ แล้วโหวตทีละตัวอักษร</small></span><span class="ms"></span></li>
+          <li data-k="ocr"><span class="dot"></span><span>อ่านตัวอักษรในกรอบ<small>Tesseract ไทย + อังกฤษ · อ่านหลายรอบ ตัวเลขอ่านแยกแล้วโหวต</small></span><span class="ms"></span></li>
           <li data-k="match"><span class="dot"></span><span>จับคู่จังหวัด<small>เทียบกับรายชื่อ 77 จังหวัด</small></span><span class="ms"></span></li>
         </ol>
       </section>
@@ -484,6 +484,18 @@ tr:last-child td { border-bottom: 0; }
     return boxes.sort((a, b) => b.det - a.det);
   }
 
+  // Horizontal extent of the last run of digit-like symbols in an English OCR result.
+  function digitSpan(data) {
+    const syms = (data.symbols || []).filter(x => x.text.trim());
+    let end = -1;
+    for (let i = syms.length - 1; i >= 0; i--) if (/[0-9OoIl]/.test(syms[i].text)) { end = i; break; }
+    if (end < 0) return null;
+    let start = end;
+    while (start > 0 && /[0-9OoIl]/.test(syms[start - 1].text) && start > end - 3) start--;
+    const run = syms.slice(start, end + 1);
+    return { x0: Math.min(...run.map(x => x.bbox.x0)), x1: Math.max(...run.map(x => x.bbox.x1)) };
+  }
+
   // Read one plate crop several times (two layout modes x four sizes) and vote character by character.
   async function readPlate(src, [x, y, w, h]) {
     const box = clampBox(src, x - w * 0.04, y - h * 0.06, w * 1.08, h * 1.12);
@@ -513,8 +525,22 @@ tr:last-child td { border-bottom: 0; }
         const m = matchPlate(data.text); if (m && m.strict) cands.push({ text: m.text, w: Math.max(0.05, (data.confidence || 0) / 100) });
         const e = (await digitWorker.recognize(canvas)).data;
         const dm = e.text.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/(?<=\d)\s+(?=\d)/g, "").match(/(\d{1,4})[^\d]*$/);
-        if (dm) digitReads.push({ digits: dm[1], w: Math.max(0.05, (e.confidence || 0) / 100) });
+        if (dm && e.confidence >= 30) digitReads.push({ digits: dm[1], w: e.confidence / 100 });
         if (/[A-Za-z]\s*-\s*\d/.test(e.text)) hyphens++;
+        // Re-read just the digits: cut the line where the English model placed them, and allow digits only,
+        // so the letters and the dash can't pull a 9 towards 0 or 8.
+        const span = digitSpan(e);
+        if (span) {
+          const m2 = Math.round(canvas.height * 0.12), x0 = Math.max(0, span.x0 - m2), x1 = Math.min(canvas.width, span.x1 + m2);
+          const dc = document.createElement("canvas"); dc.width = x1 - x0 + 2 * m2; dc.height = canvas.height;
+          const dg = dc.getContext("2d"); dg.fillStyle = "#fff"; dg.fillRect(0, 0, dc.width, dc.height);
+          dg.drawImage(canvas, x0, 0, x1 - x0, canvas.height, m2, 0, x1 - x0, canvas.height);
+          await digitWorker.setParameters({ tessedit_char_whitelist: "0123456789" });
+          const e2 = (await digitWorker.recognize(dc)).data;
+          await digitWorker.setParameters({ tessedit_char_whitelist: "" });
+          const d2 = e2.text.replace(/\s+/g, "");
+          if (/^\d{1,4}$/.test(d2) && e2.confidence >= 30) digitReads.push({ digits: d2, w: e2.confidence / 100 });
+        }
       }
       await worker.setParameters({ tessedit_char_whitelist: "" });
     }
@@ -551,11 +577,19 @@ tr:last-child td { border-bottom: 0; }
       }
       return out;
     };
+    // Prefer a number that was actually read whole; fall back to per-character voting when no read stands out.
+    const voteWhole = items => {
+      const L = vote(items).length, group = items.filter(c => c.v.length === L), total = group.reduce((a, c) => a + c.w, 0);
+      const tally = new Map(); group.forEach(c => tally.set(c.v, (tally.get(c.v) || 0) + c.w));
+      const [best, w] = [...tally].sort((a, b) => b[1] - a[1])[0];
+      return w >= total * 0.4 ? best : vote(items);
+    };
     const split = t => { const [p, d] = t.split(" "); return { p, d }; };
     const prefix = vote(cands.map(c => ({ v: split(c.text).p, w: c.w })));
     // English digit reads count double: they are the reliable source for the number
+    // English digit reads count double: the Thai model often reads a 9 as 0 or 8
     const digitItems = [...cands.map(c => ({ v: split(c.text).d, w: c.w })), ...digitReads.map(r => ({ v: r.digits, w: r.w * 2 }))];
-    const digits = vote(digitItems);
+    const digits = voteWhole(digitItems);
     let text = `${prefix} ${digits}`;
     const totalD = digitItems.reduce((a, c) => a + c.w, 0), totalP = cands.reduce((a, c) => a + c.w, 0);
     const agree = Math.min(
