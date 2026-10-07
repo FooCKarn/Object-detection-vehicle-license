@@ -181,11 +181,12 @@ tr:last-child td { border-bottom: 0; }
   </div>
 
   <section class="panel" aria-label="ประวัติการอ่าน">
-    <div class="panel-h"><span class="eyebrow">ประวัติการอ่านในรอบนี้</span></div>
+    <div class="panel-h"><span class="eyebrow">ประวัติการอ่านในรอบนี้</span>
+      <label class="thr" for="sheetOn"><input id="sheetOn" type="checkbox" style="width:auto" disabled> <span id="sheetLabel">บันทึกลง Google Sheet</span></label></div>
     <div class="log-wrap">
       <table>
-        <thead><tr><th>เวลา</th><th>ภาพ</th><th>ทะเบียน</th><th>จังหวัด</th><th>ความมั่นใจ</th><th>ใช้เวลา</th></tr></thead>
-        <tbody id="log"><tr><td colspan="6" class="empty">ยังไม่มีรายการ</td></tr></tbody>
+        <thead><tr><th>เวลา</th><th>ภาพ</th><th>ทะเบียน</th><th>จังหวัด</th><th>ความมั่นใจ</th><th>ใช้เวลา</th><th>Google Sheet</th></tr></thead>
+        <tbody id="log"><tr><td colspan="7" class="empty">ยังไม่มีรายการ</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -633,15 +634,44 @@ tr:last-child td { border-bottom: 0; }
     });
   }
 
+  // ---------- Google Sheet logging (via the site's /api/log function; only on the Vercel deployment) ----------
+  const sheetOn = document.getElementById("sheetOn"), sheetLabel = document.getElementById("sheetLabel");
+  let sheetReady = false;
+  fetch("api/log").then(r => r.ok ? r.json() : null).then(d => {
+    sheetReady = !!(d && d.configured);
+    sheetOn.disabled = !sheetReady; sheetOn.checked = sheetReady;
+    sheetLabel.textContent = sheetReady ? "บันทึกลง Google Sheet" : (d ? "Google Sheet ยังไม่ได้ตั้งค่า" : "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel");
+  }).catch(() => { sheetLabel.textContent = "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel"; });
+  async function saveToSheet(row) {
+    row.sheet = "กำลังบันทึก…"; drawLog();
+    try {
+      const r = await fetch("api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: row.text, province: row.provForSheet }) });
+      const d = await r.json().catch(() => ({}));
+      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
+    } catch { row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้"; }
+    drawLog();
+  }
+
   const logRows = [];
   function logRun(total) {
     const now = new Date().toLocaleTimeString("th-TH", { hour12: false });
-    if (!results.length) logRows.unshift([now, current.name, "ไม่พบ", "—", "—", total]);
-    results.slice().reverse().forEach(r => logRows.unshift([now, current.name, r.text || "อ่านไม่ได้", r.prov, r.conf.toFixed(2), total]));
+    const isSample = !!current.sample;
+    if (!results.length) logRows.unshift({ now, name: current.name, text: "ไม่พบ", prov: "—", conf: "—", total, sheet: "—" });
+    results.slice().reverse().forEach(r => {
+      const row = { now, name: current.name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
+        provForSheet: r.prov === "อ่านจังหวัดไม่ได้" ? "" : r.prov };
+      logRows.unshift(row);
+      if (r.text && sheetReady && sheetOn.checked) { if (isSample) row.sheet = "ไม่บันทึกภาพตัวอย่าง"; else saveToSheet(row); }
+    });
+    drawLog();
+  }
+  function drawLog() {
     const tb = document.getElementById("log"); tb.innerHTML = "";
-    logRows.slice(0, 12).forEach(cells => {
+    logRows.slice(0, 12).forEach(r => {
       const tr = document.createElement("tr");
-      cells.forEach((c, j) => { const td = document.createElement("td"); td.textContent = j === 5 ? (c / 1000).toFixed(2) + " s" : c; if (j >= 4) td.className = "num"; tr.append(td); });
+      [r.now, r.name, r.text, r.prov, r.conf, (r.total / 1000).toFixed(2) + " s", r.sheet].forEach((c, j) => {
+        const td = document.createElement("td"); td.textContent = c; if (j === 4 || j === 5) td.className = "num"; tr.append(td);
+      });
       tb.append(tr);
     });
   }
@@ -656,7 +686,7 @@ tr:last-child td { border-bottom: 0; }
   function loadSample(i) {
     if (running) return;
     const s = SAMPLES[i], c = document.createElement("canvas"); c.width = W; c.height = H; s.draw(c.getContext("2d"));
-    source = c; current = { name: s.label };
+    source = c; current = { name: s.label, sample: true };
     document.getElementById("srcLabel").textContent = "ภาพตัวอย่าง · " + s.label;
     setPressed(s.id); run();
   }
