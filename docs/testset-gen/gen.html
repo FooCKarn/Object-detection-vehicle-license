@@ -1,0 +1,146 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "PlateB"; src: url("fonts/Sarabun-Bold.ttf"); }
+@font-face { font-family: "PlateS"; src: url("fonts/Sarabun-SemiBold.ttf"); }
+@font-face { font-family: "PlateK"; src: url("fonts/Kanit-Medium.ttf"); }
+</style></head><body>
+<span style="font-family:PlateB">ก</span><span style="font-family:PlateS">ก</span><span style="font-family:PlateK">ก</span>
+<script>
+// Seeded RNG so the test set is reproducible.
+let seed = 1;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+const R = (a, b) => a + (b - a) * rnd();
+
+function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+function scene(g, W, H, kind) {
+  const sk = g.createLinearGradient(0, 0, 0, H);
+  sk.addColorStop(0, kind === "night" ? "#1d2430" : "#8fa4b8"); sk.addColorStop(0.55, kind === "night" ? "#2a2f38" : "#c9d2da"); sk.addColorStop(1, "#4a4d52");
+  g.fillStyle = sk; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(${R(0,255)|0},${R(0,255)|0},${R(0,255)|0},0.12)`; g.fillRect(R(0, W), R(0, H * 0.6), R(20, 200), R(20, 160)); }
+}
+
+// background patterns for auction / decorative plates
+function decoBg(g, x, y, w, h, style) {
+  g.save(); rr(g, x, y, w, h, h * 0.06); g.clip();
+  if (style === 0) { // sky + mountains + sun
+    const gr = g.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, "#7cc6f2"); gr.addColorStop(1, "#fbe6a6"); g.fillStyle = gr; g.fillRect(x, y, w, h);
+    g.fillStyle = "#f6a03a"; g.beginPath(); g.arc(x + w * 0.8, y + h * 0.35, h * 0.25, 0, 7); g.fill();
+    g.fillStyle = "#6fae6a"; g.beginPath(); g.moveTo(x, y + h); for (let i = 0; i <= 8; i++) g.lineTo(x + w * i / 8, y + h * (0.55 + 0.25 * Math.sin(i * 1.7))); g.lineTo(x + w, y + h); g.fill();
+  } else if (style === 1) { // pink-purple gradient with flowers
+    const gr = g.createLinearGradient(x, 0, x + w, 0); gr.addColorStop(0, "#f7b6d2"); gr.addColorStop(0.5, "#fde2ef"); gr.addColorStop(1, "#c7a3f0"); g.fillStyle = gr; g.fillRect(x, y, w, h);
+    for (let i = 0; i < 26; i++) { const cx = x + R(0, w), cy = y + R(0, h), r = R(h * 0.04, h * 0.12); g.fillStyle = `hsla(${R(280, 360)},70%,${R(55, 75)}%,0.75)`;
+      for (let p = 0; p < 5; p++) { g.beginPath(); g.ellipse(cx + Math.cos(p * 1.26) * r, cy + Math.sin(p * 1.26) * r, r * 0.7, r * 0.45, p * 1.26, 0, 7); g.fill(); } }
+  } else if (style === 2) { // gold with temple silhouette and stripes
+    const gr = g.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, "#f9e3a3"); gr.addColorStop(1, "#e2b04a"); g.fillStyle = gr; g.fillRect(x, y, w, h);
+    g.strokeStyle = "rgba(160,100,20,.35)"; g.lineWidth = h * 0.02; for (let i = -10; i < 20; i++) { g.beginPath(); g.moveTo(x + i * w / 10, y); g.lineTo(x + i * w / 10 + h, y + h); g.stroke(); }
+    g.fillStyle = "rgba(150,80,10,.45)"; g.beginPath(); g.moveTo(x + w * 0.1, y + h); g.lineTo(x + w * 0.18, y + h * 0.3); g.lineTo(x + w * 0.26, y + h); g.fill();
+    g.beginPath(); g.moveTo(x + w * 0.74, y + h); g.lineTo(x + w * 0.82, y + h * 0.2); g.lineTo(x + w * 0.9, y + h); g.fill();
+  } else { // blue sea + waves
+    const gr = g.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, "#bfe7ff"); gr.addColorStop(1, "#3c8dd6"); g.fillStyle = gr; g.fillRect(x, y, w, h);
+    g.strokeStyle = "rgba(255,255,255,.6)"; g.lineWidth = h * 0.025;
+    for (let k = 0; k < 6; k++) { g.beginPath(); for (let i = 0; i <= 40; i++) { const xx = x + w * i / 40, yy = y + h * (0.15 + k * 0.15) + Math.sin(i * 0.8 + k) * h * 0.03; i ? g.lineTo(xx, yy) : g.moveTo(xx, yy); } g.stroke(); }
+  }
+  g.restore();
+}
+
+// Car plate: 2 rows (number + province). Motorcycle plate: 3 rows (prefix / province / number).
+function plate(g, x, y, w, h, spec) {
+  g.save();
+  g.lineWidth = Math.max(2, w * 0.018); g.strokeStyle = "#111";
+  if (spec.deco != null) decoBg(g, x, y, w, h, spec.deco);
+  else { g.fillStyle = spec.bg || "#f4f4ee"; rr(g, x, y, w, h, h * 0.06); g.fill(); }
+  rr(g, x, y, w, h, h * 0.06); g.stroke();
+  g.fillStyle = spec.ink || "#111"; g.textAlign = "center"; g.textBaseline = "middle";
+  const F = spec.font || "PlateB";
+  if (spec.moto) {
+    g.font = `700 ${h * 0.3}px ${F}`; g.fillText(spec.top, x + w / 2, y + h * 0.2, w * 0.86);
+    g.font = `600 ${h * 0.15}px ${F}`; g.fillText(spec.prov, x + w / 2, y + h * 0.45, w * 0.88);
+    g.font = `700 ${h * 0.4}px ${F}`; g.fillText(spec.num, x + w / 2, y + h * 0.74, w * 0.86);
+  } else {
+    g.font = `700 ${h * 0.5}px ${F}`; g.fillText(spec.top, x + w / 2, y + h * 0.37, w * 0.9);
+    g.font = `600 ${h * 0.21}px ${F}`; g.fillText(spec.prov, x + w / 2, y + h * 0.8, w * 0.84);
+  }
+  g.restore();
+}
+
+function vehicle(g, cx, by, s, moto, color) {
+  g.fillStyle = color;
+  if (moto) { rr(g, cx - 160 * s, by - 420 * s, 320 * s, 300 * s, 60 * s); g.fill(); g.fillStyle = "#111"; rr(g, cx - 45 * s, by - 140 * s, 90 * s, 160 * s, 30 * s); g.fill();
+    g.fillStyle = "#d02a20"; rr(g, cx - 60 * s, by - 430 * s, 120 * s, 40 * s, 10 * s); g.fill(); }
+  else { rr(g, cx - 300 * s, by - 330 * s, 600 * s, 300 * s, 40 * s); g.fill(); g.fillStyle = "#c8261f"; rr(g, cx - 280 * s, by - 290 * s, 100 * s, 50 * s, 10 * s); g.fill(); rr(g, cx + 180 * s, by - 290 * s, 100 * s, 50 * s, 10 * s); g.fill(); }
+}
+
+function shadow(g, W, H, strength, ex, ey) {
+  // hard shadow edge through (ex, ey), tilted
+  g.save(); g.fillStyle = `rgba(0,0,0,${strength})`; g.beginPath();
+  const t = R(-0.5, 0.5); g.moveTo(ex - t * ey, 0); g.lineTo(ex + t * (H - ey), H); g.lineTo(W, H); g.lineTo(W, 0); g.fill(); g.restore();
+}
+function leafShadow(g, x, y, w, h) {
+  g.save(); g.fillStyle = "rgba(0,0,0,.45)";
+  for (let i = 0; i < 9; i++) { g.beginPath(); g.ellipse(x + R(0, w), y + R(0, h), R(w * 0.05, w * 0.16), R(h * 0.08, h * 0.25), R(0, 3), 0, 7); g.fill(); }
+  g.restore();
+}
+function dirt(g, x, y, w, h, n) {
+  g.save();
+  for (let i = 0; i < n; i++) { g.fillStyle = `rgba(${R(80,120)|0},${R(55,80)|0},${R(25,45)|0},${R(0.25, 0.7)})`; g.beginPath(); g.ellipse(x + R(0, w), y + R(0, h), R(2, w * 0.05), R(2, h * 0.07), R(0, 3), 0, 7); g.fill(); }
+  // mud wash on the bottom
+  const gr = g.createLinearGradient(0, y + h * 0.5, 0, y + h); gr.addColorStop(0, "rgba(110,80,40,0)"); gr.addColorStop(1, "rgba(110,80,40,.55)");
+  g.fillStyle = gr; g.fillRect(x, y + h * 0.5, w, h * 0.5);
+  g.restore();
+}
+function noise(g, W, H, amt) {
+  const im = g.getImageData(0, 0, W, H), d = im.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * amt; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  g.putImageData(im, 0, 0);
+}
+
+const CASES = [
+  // id, vehicle, plate spec, effects
+  { id: "car_clean", truth: "กท 2058|ฉะเชิงเทรา", spec: { top: "กท 2058", prov: "ฉะเชิงเทรา" }, fx: [] },
+  { id: "car_shadow", truth: "1กข 4721|กรุงเทพมหานคร", spec: { top: "1กข 4721", prov: "กรุงเทพมหานคร" }, fx: ["shadow"] },
+  { id: "car_leaf", truth: "ขม 9135|เชียงใหม่", spec: { top: "ขม 9135", prov: "เชียงใหม่" }, fx: ["leaf"] },
+  { id: "car_dirt", truth: "ฒต 6280|ขอนแก่น", spec: { top: "ฒต 6280", prov: "ขอนแก่น" }, fx: ["dirt"] },
+  { id: "car_night", truth: "3กศ 517|ชลบุรี", spec: { top: "3กศ 517", prov: "ชลบุรี" }, fx: ["dark", "noise"] },
+  { id: "car_dirt_shadow", truth: "นข 3946|นครราชสีมา", spec: { top: "นข 3946", prov: "นครราชสีมา" }, fx: ["dirt", "shadow"] },
+  { id: "moto_clean", truth: "1กข 234|กรุงเทพมหานคร", spec: { moto: true, top: "1กข", num: "234", prov: "กรุงเทพมหานคร" }, fx: [] },
+  { id: "moto_2", truth: "กจต 5091|ภูเก็ต", spec: { moto: true, top: "กจต", num: "5091", prov: "ภูเก็ต" }, fx: [] },
+  { id: "moto_shadow", truth: "2ขท 87|สงขลา", spec: { moto: true, top: "2ขท", num: "87", prov: "สงขลา" }, fx: ["shadow"] },
+  { id: "moto_dirt", truth: "งศ 1468|นครปฐม", spec: { moto: true, top: "งศ", num: "1468", prov: "นครปฐม" }, fx: ["dirt"] },
+  { id: "auction_sky", truth: "9กก 9999|กรุงเทพมหานคร", spec: { top: "9กก 9999", prov: "กรุงเทพมหานคร", deco: 0 }, fx: [] },
+  { id: "auction_flower", truth: "ฆข 8888|เชียงใหม่", spec: { top: "ฆข 8888", prov: "เชียงใหม่", deco: 1 }, fx: [] },
+  { id: "auction_gold", truth: "1กก 1|นนทบุรี", spec: { top: "1กก 1", prov: "นนทบุรี", deco: 2 }, fx: [] },
+  { id: "auction_sea", truth: "กษ 789|ภูเก็ต", spec: { top: "กษ 789", prov: "ภูเก็ต", deco: 3 }, fx: [] },
+  { id: "auction_flower_shadow", truth: "7กข 2525|ขอนแก่น", spec: { top: "7กข 2525", prov: "ขอนแก่น", deco: 1 }, fx: ["shadow"] },
+  { id: "moto_auction", truth: "1กก 99|ชลบุรี", spec: { moto: true, top: "1กก", num: "99", prov: "ชลบุรี", deco: 0 }, fx: [] },
+];
+
+window.make = (id, v = 0) => {
+  const c0 = CASES.find(c => c.id === id); seed = 1 + CASES.indexOf(c0) * 97 + v * 7919;
+  const c = v ? { ...c0, spec: { ...c0.spec, font: ["PlateK", "PlateS"][v % 2] } } : c0;
+  const W = 1600, H = 1000, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const g = cv.getContext("2d", { willReadFrequently: true });
+  scene(g, W, H, c.fx.includes("dark") ? "night" : "day");
+  const moto = !!c.spec.moto, s = R(0.9, 1.25), cx = W * R(0.4, 0.6), by = H * R(0.8, 0.9);
+  vehicle(g, cx, by, s, moto, ["#d9dde2", "#a3242b", "#2c3e66", "#222"][(rnd() * 4) | 0]);
+  const pw = moto ? 170 * s * 1.25 : 330 * s, ph = moto ? pw / 1.23 : pw / 2.25;
+  const px = cx - pw / 2, py = moto ? by - 330 * s : by - 200 * s;
+  g.save(); g.translate(px + pw / 2, py + ph / 2); g.rotate(R(-0.04, 0.04)); g.translate(-(px + pw / 2), -(py + ph / 2));
+  plate(g, px, py, pw, ph, c.spec);
+  if (c.fx.includes("dirt")) dirt(g, px, py, pw, ph, 70);
+  if (c.fx.includes("leaf")) leafShadow(g, px, py, pw, ph);
+  g.restore();
+  if (c.fx.includes("shadow")) shadow(g, W, H, 0.55, px + pw * R(0.3, 0.7), py + ph / 2);
+  if (c.fx.includes("dark")) { g.fillStyle = "rgba(0,0,10,.55)"; g.fillRect(0, 0, W, H); }
+  if (c.fx.includes("noise")) noise(g, W, H, 40); else noise(g, W, H, 10);
+  if (!v) return cv.toDataURL("image/jpeg", 0.85);
+  // held-out variant: smaller in frame, perspective squeeze, blur, harder JPEG
+  const o = document.createElement("canvas"); o.width = W; o.height = H; const og = o.getContext("2d");
+  og.filter = `blur(${R(0.6, 1.4).toFixed(2)}px)`;
+  const sx = R(0.7, 1), sk = R(-0.12, 0.12);
+  og.setTransform(sx, sk * 0.3, 0, 1, W * (1 - sx) / 2, 0); og.drawImage(cv, 0, 0);
+  return o.toDataURL("image/jpeg", 0.7);
+};
+window.CASES = CASES;
+</script></body></html>
