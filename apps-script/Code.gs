@@ -1,16 +1,16 @@
 // Google Apps Script for the LICENSE LOG sheet.
-// Log sheet columns:      ROCORD_ID | TIME | LICENSE | PROVINCE | RESULT   (header in row 1)
-// "vehicles" sheet columns: plate_number | province | student_id | status | valid_until   (header in row 1)
+// "LOG" sheet columns:      RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT   (header in row 1)
+// "REGISTER_VEHICLE" sheet columns: plate_number | province | student_id | status | expired_date   (header in row 1)
 //   status: active | blocked   (anything else counts as not allowed)
-//   province may be left empty to match any province; valid_until may be left empty for no expiry.
+//   province may be left empty to match any province; expired_date may be left empty for no expiry.
 //
 // Deploy: Extensions > Apps Script, paste this file, then Project Settings > Script properties,
 // add SECRET = <long random string>. Deploy > New deployment > Web app, Execute as: Me,
 // Who has access: Anyone. Put the /exec URL in Vercel as APPS_SCRIPT_URL and the same secret as
 // APPS_SCRIPT_SECRET. Requests without the right secret are rejected.
 
-const SHEET_NAME = "ชีต1";
-const VEHICLES_SHEET = "vehicles";
+const SHEET_NAME = "LOG";
+const VEHICLES_SHEET = "REGISTER_VEHICLE";
 const TIME_ZONE = "Asia/Bangkok";
 const CACHE_SECONDS = 60;
 

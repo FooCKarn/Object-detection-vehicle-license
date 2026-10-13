@@ -17,25 +17,25 @@ No build step; Vercel serves the folder as static files. To run locally: `npx se
 
 Each plate read from an uploaded image (not the built-in samples) is sent to
 `/api/log`, a Vercel function that forwards it to an Apps Script web app on the
-LICENSE LOG sheet. The script checks the plate against the `vehicles` sheet and
-appends `ROCORD_ID | TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
+LICENSE LOG sheet. The script checks the plate against the `REGISTER_VEHICLE` sheet and
+appends `RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
 `registered`, `blocked`, `expired`, `unregistered`, and the page shows it next to each reading.
 
 Requests to Apps Script must carry a shared secret (script property `SECRET`); without
 it the script rejects everything.
 
-### `vehicles` sheet
+### `REGISTER_VEHICLE` sheet
 
-Header in row 1: `plate_number | province | student_id | status | valid_until`
+Header in row 1: `plate_number | province | student_id | status | expired_date`
 
 - `status`: `active` or `blocked` (anything else is not allowed)
 - `province` empty = match any province
-- `valid_until` empty = no expiry (date, `yyyy-mm-dd`)
+- `expired_date` empty = no expiry (date, `yyyy-mm-dd`)
 - Spaces and dashes in the plate are ignored when matching
 
 ### One-time setup
 
-1. Open the sheet, add a tab named `vehicles` with the header above, and add `RESULT` in cell E1 of the log tab.
+1. Open the sheet, add a tab named `REGISTER_VEHICLE` with the header above, and name the log tab `LOG` with `RESULT` in cell E1.
 2. Extensions > Apps Script, paste `apps-script/Code.gs`, save.
 3. Project Settings > Script properties > add `SECRET` with a long random string.
 4. Deploy > New deployment > type Web app. Execute as: Me. Who has access: Anyone. Authorize when asked. (After later code edits: Manage deployments > edit > New version.)
