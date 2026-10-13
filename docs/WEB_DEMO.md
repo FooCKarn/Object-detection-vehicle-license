@@ -13,17 +13,36 @@ From this folder:
 
 No build step; Vercel serves the folder as static files. To run locally: `npx serve .`
 
-## Saving readings to Google Sheets
+## Saving readings to Google Sheets and checking registration
 
 Each plate read from an uploaded image (not the built-in samples) is sent to
 `/api/log`, a Vercel function that forwards it to an Apps Script web app on the
-LICENSE LOG sheet. The script appends `ROCORD_ID | TIME | LICENSE | PROVINCE`.
+LICENSE LOG sheet. The script checks the plate against the `vehicles` sheet and
+appends `ROCORD_ID | TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
+`registered`, `blocked`, `expired`, `unregistered`, and the page shows it next to each reading.
 
-One-time setup:
+Requests to Apps Script must carry a shared secret (script property `SECRET`); without
+it the script rejects everything.
 
-1. Open the sheet, Extensions > Apps Script, paste `apps-script/Code.gs`, save.
-2. Deploy > New deployment > type Web app. Execute as: Me. Who has access: Anyone. Authorize when asked.
-3. Copy the Web app URL (ends in `/exec`).
-4. In Vercel: Project > Settings > Environment Variables, add `APPS_SCRIPT_URL` with that URL, then redeploy.
+### `vehicles` sheet
 
-The page shows "บันทึกลง Google Sheet" next to the history table once `APPS_SCRIPT_URL` is set.
+Header in row 1: `plate_number | province | student_id | status | valid_until`
+
+- `status`: `active` or `blocked` (anything else is not allowed)
+- `province` empty = match any province
+- `valid_until` empty = no expiry (date, `yyyy-mm-dd`)
+- Spaces and dashes in the plate are ignored when matching
+
+### One-time setup
+
+1. Open the sheet, add a tab named `vehicles` with the header above, and add `RESULT` in cell E1 of the log tab.
+2. Extensions > Apps Script, paste `apps-script/Code.gs`, save.
+3. Project Settings > Script properties > add `SECRET` with a long random string.
+4. Deploy > New deployment > type Web app. Execute as: Me. Who has access: Anyone. Authorize when asked. (After later code edits: Manage deployments > edit > New version.)
+5. Copy the Web app URL (ends in `/exec`).
+6. In Vercel: Project > Settings > Environment Variables, add `APPS_SCRIPT_URL` (that URL) and `APPS_SCRIPT_SECRET` (same string as `SECRET`), then redeploy.
+
+The page shows "บันทึกลง Google Sheet" next to the history table once both variables are set.
+
+Note: `/api/log` itself is still open to anyone who can reach the site, so keep student or parent
+personal data out of this sheet's log and out of any public demo.

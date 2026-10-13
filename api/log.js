@@ -1,22 +1,25 @@
 // Forwards one plate reading from the demo page to the Google Apps Script web app
-// bound to the LICENSE LOG sheet. The Apps Script URL stays server-side in the
-// APPS_SCRIPT_URL environment variable (Vercel > Settings > Environment Variables).
+// bound to the LICENSE LOG sheet. The Apps Script URL and its shared secret stay
+// server-side in the APPS_SCRIPT_URL and APPS_SCRIPT_SECRET environment variables
+// (Vercel > Settings > Environment Variables). The reply carries the registration
+// result: registered | blocked | expired | unregistered.
 
 const MAX_LICENSE = 20;
 const MAX_PROVINCE = 40;
 
 module.exports = async (req, res) => {
   const url = process.env.APPS_SCRIPT_URL;
+  const secret = process.env.APPS_SCRIPT_SECRET;
 
   if (req.method === "GET") {
-    return res.status(200).json({ configured: Boolean(url) });
+    return res.status(200).json({ configured: Boolean(url && secret) });
   }
   if (req.method !== "POST") {
     res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ ok: false, error: "method not allowed" });
   }
-  if (!url) {
-    return res.status(503).json({ ok: false, error: "APPS_SCRIPT_URL is not set" });
+  if (!url || !secret) {
+    return res.status(503).json({ ok: false, error: "APPS_SCRIPT_URL / APPS_SCRIPT_SECRET is not set" });
   }
 
   let body = req.body;
@@ -34,7 +37,7 @@ module.exports = async (req, res) => {
     const upstream = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ license, province }),
+      body: JSON.stringify({ license, province, secret }),
       redirect: "follow",
     });
     const text = await upstream.text();

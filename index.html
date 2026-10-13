@@ -885,12 +885,13 @@ tr:last-child td { border-bottom: 0; }
     sheetOn.disabled = !sheetReady; sheetOn.checked = sheetReady;
     sheetLabel.textContent = sheetReady ? "บันทึกลง Google Sheet" : (d ? "Google Sheet ยังไม่ได้ตั้งค่า" : "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel");
   }).catch(() => { sheetLabel.textContent = "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel"; });
+  const RESULT_TH = { registered: "ลงทะเบียนแล้ว", unregistered: "ไม่พบในทะเบียน", blocked: "ถูกระงับสิทธิ์", expired: "สิทธิ์หมดอายุ" };
   async function saveToSheet(row) {
     row.sheet = "กำลังบันทึก…"; drawLog();
     try {
       const r = await fetch("api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: row.text, province: row.provForSheet }) });
       const d = await r.json().catch(() => ({}));
-      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
+      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id} · ${RESULT_TH[d.result] || d.result || "—"}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
     } catch { row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้"; }
     drawLog();
   }
