@@ -1176,7 +1176,7 @@ tr:last-child td { border-bottom: 0; }
     try {
       const r = await fetch("api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: row.text, province: row.provForSheet }) });
       const d = await r.json().catch(() => ({}));
-      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id} · ${RESULT_TH[d.result] || d.result || "—"}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
+      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id} · ${RESULT_TH[d.result] || d.result || "—"}${d.notified ? ` · แจ้ง LINE ${d.notified} คน` : ""}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
     } catch { row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้"; }
     drawLog();
   }
