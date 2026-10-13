@@ -18,9 +18,6 @@ const ERRORS = {
   not_bound: "ยังไม่ได้ผูกบัญชี กรุณาพิมพ์รหัสผูกบัญชีก่อน",
 };
 
-// Vercel must not parse the body: the signature is computed over the exact raw bytes.
-module.exports.config = { api: { bodyParser: false } };
-
 function readRaw(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -89,3 +86,7 @@ module.exports = async (req, res) => {
   }
   return res.status(200).json({ ok: true });
 };
+
+// Vercel must not parse the body: the signature is computed over the exact raw bytes.
+// (Set after module.exports is assigned, or the assignment above would discard it.)
+module.exports.config = { api: { bodyParser: false } };
