@@ -589,26 +589,46 @@ tr:last-child td { border-bottom: 0; }
       return { box: clampBox(src, avg(0), avg(1), avg(2), avg(3)), det, models: [...models] };
     }).sort((a, b) => b.det - a.det);
   }
+  // Normal photos are run as they are. A plate that fills or touches the frame (a close-up crop) leaves the model
+  // no context and is often missed or cut, so then run again on a copy with a grey margin and keep that result.
   async function detectPlates(src, minScore = 0.12) {
-    const full = [0, 0, src.width, src.height], area = src.width * src.height;
+    const plain = await detectPlatesIn(src, minScore, [0, 0, src.width, src.height]);
+    const edge = Math.max(4, 0.02 * Math.min(src.width, src.height));
+    const clipped = b => b.box[0] <= edge || b.box[1] <= edge || b.box[0] + b.box[2] >= src.width - edge || b.box[1] + b.box[3] >= src.height - edge;
+    const top = plain[0];
+    if (top && top.det >= 0.5 && !clipped(top) && top.box[2] * top.box[3] < 0.5 * src.width * src.height) return plain;
+    const pad = Math.round(0.2 * Math.max(src.width, src.height));
+    const c = document.createElement("canvas"); c.width = src.width + 2 * pad; c.height = src.height + 2 * pad;
+    const g = c.getContext("2d"); g.fillStyle = "rgb(114,114,114)"; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, pad, pad);
+    const padded = (await detectPlatesIn(c, minScore, [pad, pad, src.width, src.height]))
+      .map(f => ({ ...f, box: clampBox(src, f.box[0] - pad, f.box[1] - pad, f.box[2], f.box[3]) }))
+      .filter(f => f.box[2] > 12 && f.box[3] > 8);
+    // keep the padded result only when it is clearly better, or the plain one was cut by the frame or covers all of it
+    const bad = !top || clipped(top) || top.box[2] * top.box[3] >= 0.5 * src.width * src.height;
+    return padded.length && (bad || padded[0].det > top.det + 0.1) ? padded : plain;
+  }
+  // src is the padded canvas, [ix, iy, iw, ih] is where the real image sits inside it
+  async function detectPlatesIn(src, minScore, [ix, iy, iw, ih]) {
+    const full = [0, 0, src.width, src.height], area = iw * ih;
     let boxes = [];
     for (const m of detectors) boxes.push(...await runDetector(m, src, full, minScore));
     // a plate small in a big photo shrinks to a few pixels at 608; if nothing is confident, look again in overlapping tiles
-    if (!boxes.some(b => b.det >= 0.45) && Math.max(src.width, src.height) > 900) {
-      const tw = src.width * 0.6, th = src.height * 0.6;
+    if (!boxes.some(b => b.det >= 0.45) && Math.max(iw, ih) > 900) {
+      const tw = iw * 0.6, th = ih * 0.6;
       for (const [fx, fy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4], [0.2, 0.2]])
-        boxes.push(...await runDetector(detectors[0], src, clampBox(src, src.width * fx, src.height * fy, tw, th), minScore));
+        boxes.push(...await runDetector(detectors[0], src, clampBox(src, ix + iw * fx, iy + ih * fy, tw, th), minScore));
     }
-    // a box over most of the frame is the model guessing, not a plate
-    boxes = boxes.filter(b => b.box[2] * b.box[3] < area * 0.4 && b.box[2] > 12 && b.box[3] > 8);
+    // a weak box over most of the frame is the model guessing; a confident one is a close-up plate
+    boxes = boxes.filter(b => (b.box[2] * b.box[3] < area * 0.4 || b.det >= 0.6) && b.box[2] > 12 && b.box[3] > 8);
     const fused = fuseBoxes(src, boxes).slice(0, 5);
     // Second look, zoomed in: a box from the full frame is often loose (half the bike or bumper around the plate),
     // which wrecks the row split. Run the main model again on the area around each box and keep a tighter box.
     for (const f of fused) {
       const [x, y, w, h] = f.box, m = 0.35 * Math.max(w, h);
       const crop = clampBox(src, x - m, y - m, w + 2 * m, h + 2 * m);
+      // tighten only: the new box must sit inside the old one and keep most of its area, not be a part of it (the letters of a patterned plate)
       const inner = (await runDetector(detectors[0], src, crop, 0.2))
-        .filter(b => overlap(b.box, f.box) > 0.7 && b.box[2] * b.box[3] < w * h * 0.92 && b.box[2] * b.box[3] > w * h * 0.12)
+        .filter(b => overlap(b.box, f.box) > 0.8 && b.box[2] * b.box[3] < w * h * 0.95 && b.box[2] * b.box[3] > w * h * 0.45)
         .sort((a, b) => b.det - a.det)[0];
       if (inner) { f.loose = f.box; f.box = inner.box; f.det = Math.max(f.det, inner.det); }
     }
@@ -1087,8 +1107,8 @@ tr:last-child td { border-bottom: 0; }
           // a text-only hit may cover just the number line; grow the box down to take in the province line
           const [fx, fy, fw, fh] = f.box;
           const plateBox = f.hasProv ? f.box : clampBox(source, fx - fw * 0.1, fy - fh * 0.3, fw * 1.2, fh * 2.6);
-          const p = await readPlate(source, f.box);
-          if (!p.prov && plateBox !== f.box) { const q = await readPlate(source, plateBox); p.prov = q.prov; }
+          const p = await readAny(source, f.box);
+          if (!p.prov && plateBox !== f.box) { const q = await readAny(source, plateBox); p.prov = q.prov; }
           plates.push({ ...p, text: p.text || f.text, box: plateBox, det: null, viaText: true });
         }
       }
