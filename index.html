@@ -167,8 +167,8 @@ tr:last-child td { border-bottom: 0; }
       <section class="panel" aria-label="ขั้นตอนการประมวลผล">
         <div class="panel-h"><span class="eyebrow">Pipeline</span><span class="ms" id="total"></span></div>
         <ol class="pipe" id="pipe">
-          <li data-k="det"><span class="dot"></span><span>ตรวจจับป้ายทะเบียน<small>YOLOv9-t pretrained (open-image-models) · 640×640</small></span><span class="ms"></span></li>
-          <li data-k="ocr"><span class="dot"></span><span>อ่านตัวอักษรในกรอบ<small>Tesseract ไทย + อังกฤษ · อ่านหลายรอบ ตัวเลขอ่านแยกแล้วโหวต</small></span><span class="ms"></span></li>
+          <li data-k="det"><span class="dot"></span><span>ตรวจจับป้ายทะเบียน<small>YOLOv9-s + YOLOv9-t pretrained (open-image-models) · รวมกรอบ + ซูมซ้ำ</small></span><span class="ms"></span></li>
+          <li data-k="ocr"><span class="dot"></span><span>อ่านตัวอักษรในกรอบ<small>Tesseract ไทย + อังกฤษ · ปรับแสงเงา/คราบสกปรก · ป้ายมอเตอร์ไซค์ 3 แถวแยกอ่านทีละแถว</small></span><span class="ms"></span></li>
           <li data-k="match"><span class="dot"></span><span>จับคู่จังหวัด<small>เทียบกับรายชื่อ 77 จังหวัด</small></span><span class="ms"></span></li>
         </ol>
       </section>
@@ -284,11 +284,23 @@ tr:last-child td { border-bottom: 0; }
     loading = false; bar.style.width = "0";
   })();
   const ocrReady = ready;
+  // Two detectors from the same family: YOLOv9-s 608 is the main one (finds motorcycle and patterned
+  // auction plates the tiny model misses); YOLOv9-t 640 is a second opinion. Boxes are fused.
   let detector = null, detError = null;
+  const detectors = [];
   const detReady = (async () => {
-    ort.env.wasm.wasmPaths = libBase; ort.env.wasm.numThreads = 1;
-    const buf = await (await fetch(libBase + "lp640.onnx")).arrayBuffer();
-    detector = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
+    ort.env.wasm.wasmPaths = libBase;
+    // threads need a cross-origin isolated page (COOP/COEP headers in vercel.json); otherwise one thread
+    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+    const load = async (file, size, name) => {
+      const buf = await (await fetch(libBase + file)).arrayBuffer();
+      detectors.push({ name, size, sess: await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] }) });
+    };
+    // a session runs one inference at a time, so load sequentially and keep the order stable
+    await load("lp608s.onnx", 608, "v9s").catch(e => console.error(e));
+    await load("lp640.onnx", 640, "v9t").catch(e => console.error(e));
+    if (!detectors.length) throw new Error("no detector loaded");
+    detector = detectors[0].sess;
   })().catch(e => { detError = e; console.error(e); });
   const allReady = Promise.all([ocrReady, detReady]).then(() => {
     flag.textContent = detector ? "YOLOv9 + OCR ทำงานในเบราว์เซอร์" : "โหลดตัวตรวจจับไม่สำเร็จ ใช้ OCR อย่างเดียว";
@@ -300,15 +312,74 @@ tr:last-child td { border-bottom: 0; }
     console.error(err);
   });
 
+  // ---------- Lighting and dirt ----------
+  // Sliding-window max along rows then columns (van Herk style with a deque), radius r.
+  function maxFilter(a, W, H, r) {
+    const tmp = new Float32Array(W * H), out = new Float32Array(W * H), q = new Int32Array(Math.max(W, H));
+    const pass = (src, dst, len, count, stride, step) => {
+      for (let k = 0; k < count; k++) {
+        const base = k * stride; let h = 0, t = 0;
+        for (let i = 0; i < len + r; i++) {
+          if (i < len) { const v = src[base + i * step]; while (t > h && src[base + q[t - 1] * step] <= v) t--; q[t++] = i; }
+          const o = i - r; if (o < 0) continue;
+          while (q[h] < o - r) h++;
+          dst[base + o * step] = src[base + q[h] * step];
+        }
+      }
+    };
+    pass(a, tmp, W, H, W, 1); pass(tmp, out, H, W, 1, W);
+    return out;
+  }
+  function boxBlur(a, W, H, r) {
+    const I = new Float64Array((W + 1) * (H + 1)), out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += a[y*W+x]; I[(y+1)*(W+1)+x+1] = I[y*(W+1)+x+1] + row; } }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(W, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(H, y + r + 1);
+      out[y*W+x] = (I[y1*(W+1)+x1] - I[y0*(W+1)+x1] - I[y1*(W+1)+x0] + I[y0*(W+1)+x0]) / ((x1 - x0) * (y1 - y0));
+    }
+    return out;
+  }
+  // Plate text is dark ink on a lighter plate of any colour (white, yellow, red, or an auction picture).
+  // Take the brightest channel, so a coloured background turns light and black ink stays dark, then divide by
+  // the local background (a max filter wide enough to swallow a stroke, smoothed). Shadows and uneven light cancel out.
+  function flatten(d, W, H, frac) {
+    const n = W * H, v = new Float32Array(n);
+    for (let i = 0; i < n; i++) v[i] = Math.max(d[i*4], d[i*4+1], d[i*4+2]);
+    const r = Math.max(2, Math.round(H * (frac === true ? 0.08 : frac)));
+    const bg = boxBlur(maxFilter(v, W, H, r), W, H, r);
+    const out = new Uint8ClampedArray(n);
+    for (let i = 0; i < n; i++) out[i] = 255 * v[i] / Math.max(16, bg[i]);
+    return out;
+  }
+  // Remove small dark blobs (mud, splashes, screws) from a black-on-white image: anything shorter and narrower
+  // than frac x the image height is not a plate character.
+  function despeckle(bw, W, H, frac) {
+    const lim = H * frac, seen = new Uint8Array(W * H), st = [];
+    for (let i = 0; i < bw.length; i++) {
+      if (bw[i] || seen[i]) continue;
+      const px = []; st.push(i); seen[i] = 1;
+      let x0 = W, x1 = 0, y0 = H, y1 = 0;
+      while (st.length) {
+        const j = st.pop(), x = j % W, y = (j / W) | 0; px.push(j);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        for (const k of [x > 0 ? j - 1 : -1, x < W - 1 ? j + 1 : -1, j - W, j + W])
+          if (k >= 0 && k < bw.length && !bw[k] && !seen[k]) { seen[k] = 1; st.push(k); }
+      }
+      if (y1 - y0 + 1 < lim && x1 - x0 + 1 < lim) for (const j of px) bw[j] = 255;
+    }
+  }
+
   // Upscale, grayscale and stretch contrast. Returns a canvas.
+  // opts.norm flattens lighting first (shadows, dirt wash, coloured backgrounds); opts.despeckle drops specks after bin.
   function prep(src, sx, sy, sw, sh, targetH, opts = {}) {
     const k = Math.min(opts.maxScale || 4, targetH / sh);
     const c = document.createElement("canvas"); c.width = Math.round(sw * k); c.height = Math.round(sh * k);
     const g = c.getContext("2d", { willReadFrequently: true });
     g.imageSmoothingQuality = "high"; g.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
     const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
-    let lo = 255, hi = 0; const gray = new Uint8ClampedArray(d.length / 4);
-    for (let i = 0; i < gray.length; i++) { const v = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114; gray[i] = v; }
+    let lo = 255, hi = 0;
+    const gray = opts.norm ? flatten(d, c.width, c.height, opts.norm) : new Uint8ClampedArray(d.length / 4);
+    if (!opts.norm) for (let i = 0; i < gray.length; i++) { const v = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114; gray[i] = v; }
     const hist = new Uint32Array(256); gray.forEach(v => hist[v]++);
     let acc = 0; const n = gray.length;
     for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > n * 0.02) { lo = v; break; } }
@@ -338,6 +409,7 @@ tr:last-child td { border-bottom: 0; }
         if (between > best) { best = between; th = v; }
       }
       for (let i = 0; i < gray.length; i++) gray[i] = gray[i] > th ? 255 : 0;
+      if (opts.despeckle) despeckle(gray, c.width, c.height, opts.despeckle);
     }
     for (let i = 0; i < gray.length; i++) d[i*4] = d[i*4+1] = d[i*4+2] = gray[i];
     g.putImageData(im, 0, 0);
@@ -467,41 +539,106 @@ tr:last-child td { border-bottom: 0; }
     return out;
   }
 
-  // ---------- Plate detector (YOLOv9-t, end-to-end NMS; output rows: [batch, x1, y1, x2, y2, class, score]) ----------
-  async function detectPlates(src, minScore = 0.25) {
-    const S = 640, r = Math.min(S / src.height, S / src.width);
-    const nw = Math.round(src.width * r), nh = Math.round(src.height * r), dw = (S - nw) / 2, dh = (S - nh) / 2;
+  // ---------- Plate detector (YOLOv9, end-to-end NMS) ----------
+  // Runs one model on one region of the source, letterboxed to the model size. Two output layouts are read:
+  // open-image-models rows [batch, x1, y1, x2, y2, class, score], and an Ultralytics NMS export [1, K, 6] rows
+  // [x1, y1, x2, y2, score, class], so a model fine-tuned with training/finetune.py drops in as lib/lp608s.onnx.
+  async function runDetector(m, src, [rx, ry, rw, rh], minScore) {
+    const S = m.size, r = Math.min(S / rh, S / rw);
+    const nw = Math.round(rw * r), nh = Math.round(rh * r), dw = (S - nw) / 2, dh = (S - nh) / 2;
     const c = document.createElement("canvas"); c.width = S; c.height = S;
     const g = c.getContext("2d", { willReadFrequently: true });
     g.fillStyle = "rgb(114,114,114)"; g.fillRect(0, 0, S, S);
-    g.drawImage(src, Math.round(dw - 0.1), Math.round(dh - 0.1), nw, nh);
+    g.drawImage(src, rx, ry, rw, rh, Math.round(dw - 0.1), Math.round(dh - 0.1), nw, nh);
     const px = g.getImageData(0, 0, S, S).data, arr = new Float32Array(3 * S * S);
     for (let i = 0; i < S * S; i++) { arr[i] = px[i*4] / 255; arr[S*S + i] = px[i*4+1] / 255; arr[2*S*S + i] = px[i*4+2] / 255; }
-    const out = await detector.run({ [detector.inputNames[0]]: new ort.Tensor("float32", arr, [1, 3, S, S]) });
-    const o = out[detector.outputNames[0]], d = o.data, n = o.dims[0], boxes = [];
+    const sess = m.sess, out = await sess.run({ [sess.inputNames[0]]: new ort.Tensor("float32", arr, [1, 3, S, S]) });
+    const o = out[sess.outputNames[0]], d = o.data, boxes = [];
+    const ultra = o.dims.length === 3 && o.dims[2] === 6, n = ultra ? o.dims[1] : o.dims[0], st = ultra ? 6 : 7;
     for (let i = 0; i < n; i++) {
-      const score = d[i*7 + 6]; if (score < minScore) continue;
-      const x1 = (d[i*7+1] - dw) / r, y1 = (d[i*7+2] - dh) / r, x2 = (d[i*7+3] - dw) / r, y2 = (d[i*7+4] - dh) / r;
-      boxes.push({ box: clampBox(src, x1, y1, x2 - x1, y2 - y1), det: score });
+      const q = i * st, [a, b, e, f, score] = ultra ? [d[q], d[q+1], d[q+2], d[q+3], d[q+4]] : [d[q+1], d[q+2], d[q+3], d[q+4], d[q+6]];
+      if (score < minScore) continue;
+      const x1 = rx + (a - dw) / r, y1 = ry + (b - dh) / r, x2 = rx + (e - dw) / r, y2 = ry + (f - dh) / r;
+      // in a tile, a box cut by an inner tile edge is part of a plate; the neighbouring tile sees the whole one
+      const M = 3, cut = (x1 < rx + M && rx > 0) || (y1 < ry + M && ry > 0) || (x2 > rx + rw - M && rx + rw < src.width) || (y2 > ry + rh - M && ry + rh < src.height);
+      if (!cut) boxes.push({ box: clampBox(src, x1, y1, x2 - x1, y2 - y1), det: score, m: m.name });
     }
-    return boxes.sort((a, b) => b.det - a.det);
+    return boxes;
+  }
+  // overlap measures: over the union (same box?) and over the smaller box (one inside the other?)
+  const overlap = ([ax, ay, aw, ah], [bx, by, bw, bh], over = "min") => {
+    const iw = Math.min(ax + aw, bx + bw) - Math.max(ax, bx), ih = Math.min(ay + ah, by + bh) - Math.max(ay, by);
+    if (iw <= 0 || ih <= 0) return 0;
+    const i = iw * ih;
+    return i / (over === "union" ? aw * ah + bw * bh - i : Math.min(aw * ah, bw * bh));
+  };
+  // Weighted box fusion: boxes from both models (and tiles) that cover the same plate become one group.
+  // The box is the score-weighted average of the members that really are the same box (IoU > 0.5) as the best one;
+  // the others (a box inside or around it) only join the vote. Two models agreeing raise the score a little.
+  function fuseBoxes(src, boxes) {
+    const sorted = boxes.slice().sort((a, b) => b.det - a.det), groups = [];
+    for (const b of sorted) {
+      const g = groups.find(g => overlap(g[0].box, b.box) > 0.55);
+      g ? g.push(b) : groups.push([b]);
+    }
+    return groups.map(g0 => {
+      const g = g0.filter(b => b === g0[0] || overlap(g0[0].box, b.box, "union") > 0.5);
+      const tw = g.reduce((t, b) => t + b.det, 0), avg = k => g.reduce((t, b) => t + b.box[k] * b.det, 0) / tw;
+      const models = new Set(g0.map(b => b.m)), top = g0[0].det;
+      const det = Math.min(0.99, models.size > 1 ? top + (1 - top) * 0.25 * Math.max(...g0.filter(b => b.m !== g0[0].m).map(b => b.det)) : top);
+      return { box: clampBox(src, avg(0), avg(1), avg(2), avg(3)), det, models: [...models] };
+    }).sort((a, b) => b.det - a.det);
+  }
+  async function detectPlates(src, minScore = 0.12) {
+    const full = [0, 0, src.width, src.height], area = src.width * src.height;
+    let boxes = [];
+    for (const m of detectors) boxes.push(...await runDetector(m, src, full, minScore));
+    // a plate small in a big photo shrinks to a few pixels at 608; if nothing is confident, look again in overlapping tiles
+    if (!boxes.some(b => b.det >= 0.45) && Math.max(src.width, src.height) > 900) {
+      const tw = src.width * 0.6, th = src.height * 0.6;
+      for (const [fx, fy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4], [0.2, 0.2]])
+        boxes.push(...await runDetector(detectors[0], src, clampBox(src, src.width * fx, src.height * fy, tw, th), minScore));
+    }
+    // a box over most of the frame is the model guessing, not a plate
+    boxes = boxes.filter(b => b.box[2] * b.box[3] < area * 0.4 && b.box[2] > 12 && b.box[3] > 8);
+    const fused = fuseBoxes(src, boxes).slice(0, 5);
+    // Second look, zoomed in: a box from the full frame is often loose (half the bike or bumper around the plate),
+    // which wrecks the row split. Run the main model again on the area around each box and keep a tighter box.
+    for (const f of fused) {
+      const [x, y, w, h] = f.box, m = 0.35 * Math.max(w, h);
+      const crop = clampBox(src, x - m, y - m, w + 2 * m, h + 2 * m);
+      const inner = (await runDetector(detectors[0], src, crop, 0.2))
+        .filter(b => overlap(b.box, f.box) > 0.7 && b.box[2] * b.box[3] < w * h * 0.92 && b.box[2] * b.box[3] > w * h * 0.12)
+        .sort((a, b) => b.det - a.det)[0];
+      if (inner) { f.loose = f.box; f.box = inner.box; f.det = Math.max(f.det, inner.det); }
+    }
+    return fusionDedupe(fused);
+  }
+  // after refining, two loose boxes can land on the same plate
+  function fusionDedupe(list) {
+    const out = [];
+    for (const f of list.sort((a, b) => b.det - a.det)) if (out.every(o => overlap(o.box, f.box) < 0.6)) out.push(f);
+    return out;
   }
 
   // Split the plate into glyphs: threshold, find connected dark blobs, and keep the tall ones on the
   // registration line. The frame, screws, dealer text and the small province line all fall away.
-  function segmentRow(src, [x, y, w, h]) {
+  function segmentRow(src, [x, y, w, h], opts = {}) {
     const H = 160, k = H / h, W = Math.max(8, Math.round(w * k));
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high";
     g.drawImage(src, x, y, w, h, 0, 0, W, H);
-    const d = g.getImageData(0, 0, W, H).data, n = W * H, gray = new Uint8Array(n);
-    for (let i = 0; i < n; i++) gray[i] = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114;
+    const d = g.getImageData(0, 0, W, H).data, n = W * H, plain = new Uint8Array(n);
+    for (let i = 0; i < n; i++) plain[i] = d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114;
+    // plain gray first, then lighting-flattened (a shadow edge or mud wash splits Otsu on plain gray)
+    const sources = [plain, flatten(d, W, H, opts.normFrac || 0.06)];
+    let bestRow = null;
+    for (const gray of sources) {
     const hist = new Float64Array(256); gray.forEach(v => hist[v]++);
     let sum = 0; for (let v = 0; v < 256; v++) sum += v * hist[v];
     let sB = 0, wB = 0, best = -1, otsu = 128;
     for (let v = 0; v < 256; v++) { wB += hist[v]; if (!wB) continue; const wF = n - wB; if (!wF) break;
       sB += v * hist[v]; const b = wB * wF * (sB / wB - (sum - sB) / wF) ** 2; if (b > best) { best = b; otsu = v; } }
-    let bestRow = null;
     for (const f of [1, 0.85, 0.7, 1.15]) {
       const th = otsu * f, lab = new Int32Array(n).fill(-1), blobs = [], dark = new Uint8Array(n);
       for (let i = 0; i < n; i++) dark[i] = gray[i] <= th ? 1 : 0;
@@ -543,6 +680,7 @@ tr:last-child td { border-bottom: 0; }
         Math.abs((b.y0 + b.y1) / 2 - rc) < rh * 0.2);
       bestRow = { glyphs: row, dashes, W, H };
     }
+    }
     return bestRow;
   }
   // Draw glyphs black on white, scaled so the tallest is targetH px, with even padding.
@@ -572,14 +710,38 @@ tr:last-child td { border-bottom: 0; }
     return { x0: Math.min(...run.map(x => x.bbox.x0)), x1: Math.max(...run.map(x => x.bbox.x1)) };
   }
 
+  // vote the letter prefix and the number separately, character by character within the most common length
+  const vote = items => {
+    const groups = new Map();
+    for (const c of items) { const k = c.v.length; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+    const group = [...groups.values()].sort((a, b) => b.reduce((t, c) => t + c.w, 0) - a.reduce((t, c) => t + c.w, 0))[0];
+    let out = "";
+    for (let i = 0; i < group[0].v.length; i++) {
+      const tally = new Map();
+      for (const c of group) tally.set(c.v[i], (tally.get(c.v[i]) || 0) + c.w);
+      out += [...tally].sort((a, b) => b[1] - a[1])[0][0];
+    }
+    return out;
+  };
+  // Prefer a number that was actually read whole; fall back to per-character voting when no read stands out.
+  const voteWhole = items => {
+    const L = vote(items).length, group = items.filter(c => c.v.length === L), total = group.reduce((a, c) => a + c.w, 0);
+    const tally = new Map(); group.forEach(c => tally.set(c.v, (tally.get(c.v) || 0) + c.w));
+    const [best, w] = [...tally].sort((a, b) => b[1] - a[1])[0];
+    return w >= total * 0.4 ? best : vote(items);
+  };
+
+  // Ways to clean a text line before OCR: as is, global threshold, lighting flattened, flattened + threshold + specks removed.
+  const LINE_MODES = [{}, { bin: true }, { norm: true }, { norm: true, bin: true, despeckle: 0.22 }];
+
   // Read one plate crop several times (two layout modes x four sizes) and vote character by character.
   async function readPlate(src, [x, y, w, h]) {
     const box = clampBox(src, x - w * 0.04, y - h * 0.06, w * 1.08, h * 1.12);
     const cands = [], texts = []; let prov = null, hyphens = 0;
     for (const psm of ["11", "6"]) {
       await worker.setParameters({ tessedit_pageseg_mode: psm });
-      for (const th of [90, 120, 150, 190]) {
-        const { canvas } = prep(src, ...box, th);
+      for (const [th, norm] of [[90, false], [120, 0.06], [150, false], [190, 0.06]]) {
+        const { canvas } = prep(src, ...box, th, { norm });
         const { data } = await worker.recognize(canvas);
         texts.push(data.text);
         for (const l of data.lines || []) { const m = matchPlate(l.text); if (m && m.strict) cands.push({ text: m.text, w: Math.max(0.05, lineConf(l)) }); }
@@ -592,9 +754,9 @@ tr:last-child td { border-bottom: 0; }
       const [bx0, by0, bw0, bh0] = box;
       await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: PLATE_CHARS });
       for (const [top, hgt] of [[0.04, 0.58], [0.12, 0.48]])
-      for (const bin of [false, true]) for (const th of [40, 56, 72]) {
+      for (const mode of LINE_MODES) for (const th of [44, 64]) {
         const band = clampBox(src, bx0 + bw0 * 0.03, by0 + bh0 * top, bw0 * 0.94, bh0 * hgt);
-        const { canvas } = prep(src, ...band, th, { bin, trim: true, pad: 0.2, maxScale: 8 });
+        const { canvas } = prep(src, ...band, th, { ...mode, trim: true, pad: 0.2, maxScale: 8 });
         const { data } = await worker.recognize(canvas);
         texts.push(data.text);
         if (/[ก-ฮ]\s*-\s*\d/.test(data.text)) hyphens++;
@@ -678,8 +840,8 @@ tr:last-child td { border-bottom: 0; }
       for (const psm of ["7", "6"]) {
         const band = clampBox(src, bx0 + bw0 * 0.06, by0 + bh0 * top, bw0 * 0.88, bh0 * hgt);
         await worker.setParameters({ tessedit_pageseg_mode: psm });
-        for (const [th, bin] of [[44, false], [60, false], [80, false], [110, false], [60, true], [80, true]]) {
-          const { canvas } = prep(src, ...band, th, { bin, trim: true, pad: 0.15, maxScale: 8 });
+        for (const [th, bin, norm] of [[44, false], [60, false], [80, false], [60, true], [60, false, true], [80, true, true]]) {
+          const { canvas } = prep(src, ...band, th, { bin, norm, trim: true, pad: 0.15, maxScale: 8 });
           const { data } = await worker.recognize(canvas);
           texts.push(data.text);
           for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
@@ -690,26 +852,6 @@ tr:last-child td { border-bottom: 0; }
     await worker.setParameters({ tessedit_pageseg_mode: "11" });
     const raw = texts.map(t => t.trim().replace(/\n+/g, " / ")).filter(Boolean)[0] || "";
     if (!cands.length && !(glyphPrefix && glyphDigits)) return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
-    // vote the letter prefix and the number separately, character by character within the most common length
-    const vote = items => {
-      const groups = new Map();
-      for (const c of items) { const k = c.v.length; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
-      const group = [...groups.values()].sort((a, b) => b.reduce((t, c) => t + c.w, 0) - a.reduce((t, c) => t + c.w, 0))[0];
-      let out = "";
-      for (let i = 0; i < group[0].v.length; i++) {
-        const tally = new Map();
-        for (const c of group) tally.set(c.v[i], (tally.get(c.v[i]) || 0) + c.w);
-        out += [...tally].sort((a, b) => b[1] - a[1])[0][0];
-      }
-      return out;
-    };
-    // Prefer a number that was actually read whole; fall back to per-character voting when no read stands out.
-    const voteWhole = items => {
-      const L = vote(items).length, group = items.filter(c => c.v.length === L), total = group.reduce((a, c) => a + c.w, 0);
-      const tally = new Map(); group.forEach(c => tally.set(c.v, (tally.get(c.v) || 0) + c.w));
-      const [best, w] = [...tally].sort((a, b) => b[1] - a[1])[0];
-      return w >= total * 0.4 ? best : vote(items);
-    };
     const split = t => { const [p, d] = t.split(" "); return { p, d }; };
 
     // English digit reads count double: the Thai model often reads a 9 as 0 or 8
@@ -736,6 +878,128 @@ tr:last-child td { border-bottom: 0; }
       ...(glyphDigits ? [[`แยกตัว ${glyphPrefix ? glyphPrefix.v + " " : ""}${glyphDigits.digits}`, 1]] : [])];
     if (hyphens >= 2) text = text.replace(" ", "-"); // red plates print a dash: ล-9912
     return { text, ocr: agree, votes, prov: prov && prov.name, provScore: prov ? prov.score : 0, raw };
+  }
+
+  // ---------- Motorcycle plates: three rows (letters / province / number) ----------
+  // Find the three text rows from a row profile of the ink, after flattening the lighting and erasing the frame.
+  // Returns [y0, y1] of the ink in each row, in source pixels; falls back to the standard layout proportions.
+  function motoRows(src, [x, y, w, h]) {
+    const H = 240, k = H / h, W = Math.max(8, Math.round(w * k));
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, x, y, w, h, 0, 0, W, H);
+    const v = flatten(g.getImageData(0, 0, W, H).data, W, H, 0.05), n = W * H;
+    const hist = new Float64Array(256); v.forEach(t => hist[t]++);
+    let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+    let sB = 0, wB = 0, best = -1, th = 128;
+    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break;
+      sB += t * hist[t]; const b = wB * wF * (sB / wB - (sum - sB) / wF) ** 2; if (b > best) { best = b; th = t; } }
+    const dark = new Uint8Array(n); for (let i = 0; i < n; i++) dark[i] = v[i] <= th ? 1 : 0;
+    // erase the frame: long horizontal and vertical runs
+    const keep = dark.slice();
+    for (let yy = 0; yy < H; yy++) for (let xx = 0, r = 0; xx <= W; xx++) {
+      if (xx < W && dark[yy*W+xx]) { r++; continue; } if (r >= W * 0.3) for (let t = xx - r; t < xx; t++) keep[yy*W+t] = 0; r = 0; }
+    for (let xx = 0; xx < W; xx++) for (let yy = 0, r = 0; yy <= H; yy++) {
+      if (yy < H && dark[yy*W+xx]) { r++; continue; } if (r >= H * 0.45) for (let t = yy - r; t < yy; t++) keep[t*W+xx] = 0; r = 0; }
+    const x0 = Math.round(W * 0.07), x1 = Math.round(W * 0.93), prof = new Float32Array(H);
+    for (let yy = 0; yy < H; yy++) { let t = 0; for (let xx = x0; xx < x1; xx++) t += keep[yy*W+xx]; prof[yy] = t / (x1 - x0); }
+    let runs = [];
+    for (let yy = 0, s = -1; yy <= H; yy++) {
+      const on = yy < H && prof[yy] > 0.035;
+      if (on && s < 0) s = yy; else if (!on && s >= 0) { runs.push([s, yy - 1]); s = -1; }
+    }
+    // join runs split by a thin gap (Thai vowels above the province line), drop slivers
+    runs = runs.reduce((a, r) => { const l = a[a.length - 1]; if (l && r[0] - l[1] <= H * 0.02) l[1] = r[1]; else a.push(r.slice()); return a; }, [])
+      .filter(r => r[1] - r[0] >= H * 0.05);
+    const toSrc = ([a, b]) => [y + a / k, y + (b + 1) / k];
+    const fallback = { top: [y + h * 0.06, y + h * 0.34], mid: [y + h * 0.36, y + h * 0.53], bot: [y + h * 0.56, y + h * 0.93], found: false };
+    if (runs.length < 3) return fallback;
+    const ht = r => r[1] - r[0], mid = r => (r[0] + r[1]) / 2;
+    const upper = runs.filter(r => mid(r) < H * 0.45), lower = runs.filter(r => mid(r) > H * 0.5);
+    if (!upper.length || !lower.length) return fallback;
+    const top = upper.reduce((a, r) => ht(r) > ht(a) ? r : a), bot = lower.reduce((a, r) => ht(r) > ht(a) ? r : a);
+    const between = runs.filter(r => r[0] > top[1] && r[1] < bot[0]);
+    const pm = between.length ? between.reduce((a, r) => ht(r) > ht(a) ? r : a) : [top[1] + 2, bot[0] - 2];
+    // the number is the tallest text on the plate and the province the smallest; anything else is a guess
+    if (ht(bot) < ht(pm)) return fallback;
+    return { top: toSrc(top), mid: toSrc(pm), bot: toSrc(bot), found: true };
+  }
+
+  // Read one text row of a motorcycle plate several ways. kind: "prefix" (digit + Thai letters), "digits", "prov".
+  async function readRow(src, [x, w], [y0, y1], kind) {
+    const gh = y1 - y0, reads = [], texts = [];
+    const band = clampBox(src, x + w * 0.04, y0 - gh * 0.22, w * 0.92, gh * 1.44);
+    const PREFIX = PLATE_CHARS.replace(/[- ]/g, "");
+    if (kind === "prov") {
+      let prov = null;
+      await worker.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "" });
+      for (const mode of [{}, { norm: true }, { norm: true, bin: true }]) for (const th of [40, 56]) {
+        const { canvas } = prep(src, ...clampBox(src, x + w * 0.04, y0 - gh * 0.35, w * 0.92, gh * 1.7), th, { ...mode, trim: true, pad: 0.15, maxScale: 8 });
+        const { data } = await worker.recognize(canvas); texts.push(data.text);
+        for (const line of data.text.split("\n")) { const m = matchProvince(line); if (m && (!prov || m.score > prov.score)) prov = m; }
+        if (prov && prov.score >= 0.9) break;
+      }
+      return { prov, texts };
+    }
+    const ocrW = kind === "digits" ? digitWorker : worker;
+    await ocrW.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: kind === "digits" ? "0123456789" : PREFIX });
+    for (const mode of LINE_MODES) for (const th of [48, 64]) {
+      const { canvas } = prep(src, ...band, th, { ...mode, trim: true, pad: 0.2, maxScale: 8 });
+      const { data } = await ocrW.recognize(canvas); texts.push(data.text);
+      const t = clean(data.text).replace(/[ะ-ฺเ-๎\s]/g, "");
+      const ok = kind === "digits" ? /^\d{1,4}$/.test(t) : /^\d?[ก-ฮ]{1,3}$/.test(t);
+      if (ok) reads.push({ v: t, w: Math.max(0.05, (data.confidence || 0) / 100) });
+    }
+    // glyph by glyph: segment the row (padded so a glyph is about 60% of the band, as segmentRow expects)
+    const seg = segmentRow(src, clampBox(src, x + w * 0.02, y0 - gh * 0.36, w * 0.96, gh * 1.72), { normFrac: 0.05 });
+    if (seg && seg.glyphs.length <= 4) {
+      let out = "", conf = 0;
+      for (const gl of seg.glyphs) {
+        if (gl.bw < gl.bh * 0.36 && gl.px.length >= gl.bw * gl.bh * 0.5) { out += "1"; conf += 0.9; continue; }
+        let got = null;
+        for (const [psm, size] of [["10", 48], ["10", 34], ["8", 48]]) {
+          await ocrW.setParameters({ tessedit_pageseg_mode: psm });
+          const e = (await ocrW.recognize(renderGlyphs(seg, [gl], size))).data, t = e.text.trim();
+          if (kind === "digits" ? /^\d$/.test(t) : /^[ก-ฮ0-9]$/.test(t)) { got = { t, c: e.confidence / 100 }; break; }
+        }
+        if (!got) { out = ""; break; }
+        out += got.t; conf += got.c;
+      }
+      if (out && (kind === "digits" ? /^\d{1,4}$/.test(out) : /^\d?[ก-ฮ]{1,3}$/.test(out)))
+        reads.push({ v: out, w: conf / seg.glyphs.length * (kind === "digits" ? 4 : 3), glyph: true });
+    }
+    await ocrW.setParameters({ tessedit_pageseg_mode: kind === "digits" ? "7" : "11", tessedit_char_whitelist: "" });
+    return { reads, texts };
+  }
+
+  async function readMoto(src, [x, y, w, h]) {
+    const box = clampBox(src, x - w * 0.03, y - h * 0.03, w * 1.06, h * 1.06);
+    const rows = motoRows(src, box), xs = [box[0], box[2]];
+    const pre = await readRow(src, xs, rows.top, "prefix");
+    const num = await readRow(src, xs, rows.bot, "digits");
+    const pv = await readRow(src, xs, rows.mid, "prov");
+    const raw = [...pre.texts, ...pv.texts, ...num.texts].map(t => t.trim()).filter(Boolean)[0] || "";
+    const prov = pv.prov;
+    if (!pre.reads.length || !num.reads.length)
+      return { text: null, ocr: 0, votes: [], prov: prov && prov.name, provScore: prov ? prov.score : 0, raw, layout: "moto" };
+    const prefix = voteWhole(pre.reads), digits = voteWhole(num.reads);
+    const share = (items, v) => items.filter(c => c.v === v).reduce((a, c) => a + c.w, 0) / items.reduce((a, c) => a + c.w, 0);
+    const tally = items => { const m = new Map(); items.forEach(c => m.set(c.v, (m.get(c.v) || 0) + 1)); return [...m].sort((a, b) => b[1] - a[1]); };
+    const votes = [...tally(pre.reads).map(([v, n]) => [`แถวบน ${v}`, n]), ...tally(num.reads).map(([v, n]) => [`แถวล่าง ${v}`, n])];
+    return { text: `${prefix} ${digits}`, ocr: Math.min(share(pre.reads, prefix), share(num.reads, digits)) * (rows.found ? 1 : 0.85),
+      votes, prov: prov && prov.name, provScore: prov ? prov.score : 0, raw, layout: "moto" };
+  }
+  // Car plates are about 2.2:1, motorcycle plates about 1.2:1. Read by shape; when the shape is in between
+  // or the first reading is weak, try the other layout and keep the stronger result.
+  const readScore = p => (p.text ? 1 : 0) + p.ocr + (p.prov ? p.provScore * 0.5 : 0);
+  async function readAny(src, box) {
+    const asp = box[2] / box[3];
+    const order = asp < 1.6 ? [readMoto, readPlate] : [readPlate, readMoto];
+    let p = await order[0](src, box);
+    if ((asp >= 1.45 && asp < 1.95) || !p.text || p.ocr < 0.45) {
+      const q = await order[1](src, box);
+      if (readScore(q) > readScore(p)) p = q;
+    }
+    return p;
   }
 
   // OCR one region of the source; returns plates with boxes in source coordinates.
@@ -806,12 +1070,13 @@ tr:last-child td { border-bottom: 0; }
       t = performance.now(); setStep("ocr", "run");
       const plates = [];
       for (const b of boxes.slice(0, 5)) {
-        const p = await readPlate(source, b.box);
+        const p = await readAny(source, b.box);
         if (!p.text && b.det != null && b.det < 0.5) continue; // weak box with nothing readable
+        if (b.det != null && b.det < 0.3 && p.ocr < 0.4) continue; // very weak box: keep only a reading that agrees with itself
         plates.push({ ...p, box: b.box, det: b.det });
       }
       // nothing detected: fall back to searching the whole image for plate-shaped text
-      if (!region && !boxes.length) {
+      if (!region && !plates.length) {
         let found = [], texts = [];
         for (const h of [...new Set([Math.min(1400, source.height), 480, 260, 150].filter(h => h <= Math.max(source.height, 150)))]) {
           const r = await readRegion(source, [0, 0, source.width, source.height], h);
@@ -969,6 +1234,9 @@ tr:last-child td { border-bottom: 0; }
     run(clampBox(source, x, y, w, h));
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", paint);
+
+  // for testing from the console or an automated harness
+  window.PlateScan = { detectPlates, readAny, readPlate, readMoto, readRow, motoRows, prep, matchProvince, get source() { return source; } };
 
   const start = () => loadSample(0);
   (document.fonts?.ready || Promise.resolve()).then(start, start);
