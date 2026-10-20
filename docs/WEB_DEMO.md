@@ -49,14 +49,21 @@ personal data out of this sheet's log and out of any public demo.
 
 ## LINE notifications to guardians
 
-A guardian adds the college's LINE Official Account, sends the 6-character bind code staff gave them,
-then replies `ยินยอม`. The webhook reads their LINE userId from the event and writes it to the sheet,
-so nobody types a LINE ID. After that, every time a registered vehicle is read, the student's
-consenting guardians get "นายสมชาย เข้าวิทยาลัย เวลา 07:42 น.", and blocked / expired / unregistered
-plates alert the security guards. The same student or plate is not announced again within 10 minutes.
+The OA's rich menu has two buttons, "ลงทะเบียน" and "ยกเลิกการแจ้งเตือน". Both open the LIFF page
+(`liff/index.html`). To register, a guardian types the 6-character bind code staff gave them and ticks
+the consent box; one tap binds their LINE account and turns notifications on. The cancel page lists the
+students they follow and stops all of them. `/api/liff` checks the LIFF ID token with LINE and takes the
+userId from it, so nobody types a LINE ID and a page cannot act for someone else's account. A short
+confirmation message is pushed to the chat after each change.
 
-Bot commands: `<bind code>` (bind), `ยินยอม` (consent / resume), `ยกเลิก` (stop). A LINE user gets
-locked out after 5 wrong codes in an hour.
+After that, every time a registered vehicle is read, the student's consenting guardians get
+"นายสมชาย เข้าวิทยาลัย เวลา 07:42 น.", and blocked / expired / unregistered plates alert the security
+guards. The same student or plate is not announced again within 10 minutes.
+
+The chat itself only carries notifications: a new follower gets one welcome message and any other text
+gets "กรุณาใช้เมนูด้านล่าง". The old typed commands (`<bind code>`, `ยินยอม`, `ยกเลิก`) still work for
+guardians who started that way; set `LEGACY_CHAT_COMMANDS=off` in Vercel to drop them. A LINE user gets
+locked out after 5 wrong codes in an hour, on the page and in the chat alike.
 
 ### `STUDENT_GUARDIAN` sheet
 
@@ -64,17 +71,25 @@ Header in row 1: `student_id | student_name | bind_code | line_user_id | consent
 
 - Staff fill `student_id` (same value as in `REGISTER_VEHICLE`) and `student_name`; one row per guardian.
 - Format the `bind_code` column as Plain text, then run `generateBindCodes` from the Apps Script editor to fill the empty codes. Give each guardian their own code.
-- `line_user_id` and `consent` (`pending` / `yes` / `no`) are filled by the bot. Do not edit them by hand unless you are fixing a mistake.
-- A row with `student_id` = `SECURITY` receives the alerts. Bind a guard's LINE account the same way (give that row a bind code, then the guard sends it and replies `ยินยอม`).
+- `line_user_id` and `consent` (`pending` / `yes` / `no`) are filled by the system. Do not edit them by hand unless you are fixing a mistake.
+- A row with `student_id` = `SECURITY` receives the alerts. A guard registers on the same page with that row's bind code.
 
 ### One-time setup
 
-1. Paste the new `apps-script/Code.gs`, Save, then Deploy > Manage deployments > edit > New version.
+1. Paste the new `apps-script/Code.gs`, Save, then Deploy > Manage deployments > edit > New version (keeps the same URL).
 2. Create the `STUDENT_GUARDIAN` tab as above.
 3. LINE Official Account Manager: create the account. LINE Developers: create a Messaging API channel for it.
 4. In Vercel add `LINE_CHANNEL_SECRET` and `LINE_CHANNEL_ACCESS_TOKEN` (long-lived), then Redeploy.
-5. LINE Developers > Messaging API: set Webhook URL to `https://<site>/api/line-webhook`, press Verify, and turn "Use webhook" on. In LINE Official Account Manager > Response settings, turn off auto-reply and greeting messages.
+5. LINE Developers > Messaging API: set Webhook URL to `https://<site>/api/line-webhook`, press Verify, and turn "Use webhook" on. In LINE Official Account Manager > Response settings, turn off auto-reply and greeting messages (the webhook sends the welcome).
 6. Open `https://<site>/api/line-webhook` in a browser: it should show `{"configured":true}`.
+
+### LIFF registration page
+
+1. LINE Developers: in the **same provider** as the Messaging API channel, create a **LINE Login** channel. (LINE userIds differ between providers; in another provider the page would save ids the OA cannot message.) Under Basic settings, set "Linked LINE Official Account" to the OA. Publish the channel (Developing > Published) so guardians can use it.
+2. In that channel, LIFF > Add: Size `Tall`, Endpoint URL `https://<site>/liff/`, Scopes `openid`, Add friend option `On (Aggressive)`. Copy the LIFF ID.
+3. In Vercel add `LIFF_ID` (the LIFF ID) and `LINE_LOGIN_CHANNEL_ID` (the LINE Login channel's Channel ID, under Basic settings), then Redeploy. `https://<site>/api/liff` should show `"configured":true`.
+4. LINE Official Account Manager > Rich menus > Create: template with 2 areas (2500x843), set "Menu bar" text to "เมนู" and Default display on. Left area: Link `https://liff.line.me/<LIFF_ID>?mode=register`, label "ลงทะเบียน". Right area: Link `https://liff.line.me/<LIFF_ID>?mode=cancel`, label "ยกเลิกการแจ้งเตือน".
+5. Test with one test row: register from the menu, check that `line_user_id` and `consent` = `yes` appear in the sheet, log a plate for that student and get the message, then cancel.
 
 `/api/log` also accepts an optional `gate` (`in` or `out`) to say "เข้า" or "ออก" in the message;
 without it the message says "ผ่านประตูวิทยาลัย".

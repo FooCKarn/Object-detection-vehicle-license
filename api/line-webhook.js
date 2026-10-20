@@ -1,21 +1,31 @@
-// LINE Messaging API webhook. A guardian adds the official account, sends the bind code the
-// college gave them, and replies "ยินยอม" to consent. The sender's LINE userId is read from the
-// event and written to the STUDENT_GUARDIAN sheet by the Apps Script, so nobody types a LINE ID.
+// LINE Messaging API webhook. Guardians register and cancel on the LIFF page (liff/index.html) that
+// the OA's rich menu opens, so the chat only carries notifications: a new follower gets one welcome
+// message and any other text gets a short pointer to the menu.
 //
-// Env: LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET.
+// The old typed commands (bind code, then "ยินยอม"; "ยกเลิก") still work for guardians who started
+// that way. Set LEGACY_CHAT_COMMANDS=off to drop them once everyone uses the menu.
+//
+// Env: LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, APPS_SCRIPT_URL, APPS_SCRIPT_SECRET, LIFF_ID.
 // LINE Developers Console > Messaging API > Webhook URL: https://<site>/api/line-webhook
 
 const crypto = require("crypto");
 const { callScript, lineReply } = require("./_shared");
 
-const HELP = "สวัสดีครับ นี่คือระบบแจ้งเตือนการเข้า-ออกวิทยาลัย V-Gate\n" +
-  "พิมพ์รหัสผูกบัญชี 6 หลักที่วิทยาลัยให้ไว้ เพื่อเริ่มรับแจ้งเตือน\n" +
-  "พิมพ์ \"ยกเลิก\" เพื่อหยุดรับแจ้งเตือน";
+// With LIFF_ID set the messages also carry the links, for phones where the rich menu is hidden.
+function liffLink(mode) {
+  const id = process.env.LIFF_ID;
+  return id ? `\nhttps://liff.line.me/${id}?mode=${mode}` : "";
+}
+const welcome = () => "สวัสดีครับ นี่คือระบบแจ้งเตือนการเข้า-ออกวิทยาลัย V-Gate\n" +
+  "กดปุ่ม \"ลงทะเบียน\" ที่เมนูด้านล่าง แล้วกรอกรหัสผูกบัญชี 6 หลักที่วิทยาลัยให้ไว้" + liffLink("register");
+const useMenu = () => "กรุณาใช้เมนูด้านล่างเพื่อลงทะเบียนหรือยกเลิกการแจ้งเตือน\n" +
+  "แชตนี้ใช้สำหรับส่งแจ้งเตือนเท่านั้น" + liffLink("register");
+const legacyOn = () => process.env.LEGACY_CHAT_COMMANDS !== "off";
 const ERRORS = {
   not_found: "ไม่พบรหัสนี้ กรุณาตรวจสอบรหัสอีกครั้ง",
   locked: "พิมพ์รหัสผิดหลายครั้ง กรุณาลองใหม่ภายหลัง หรือติดต่อวิทยาลัย",
   already_bound: "รหัสนี้ถูกผูกกับบัญชี LINE อื่นแล้ว กรุณาติดต่อวิทยาลัย",
-  not_bound: "ยังไม่ได้ผูกบัญชี กรุณาพิมพ์รหัสผูกบัญชีก่อน",
+  not_bound: "ยังไม่ได้ลงทะเบียน กรุณากดปุ่ม \"ลงทะเบียน\" ที่เมนูด้านล่าง",
 };
 
 function readRaw(req) {
@@ -36,14 +46,15 @@ function validSignature(raw, signature, secret) {
 
 async function handleText(userId, text) {
   const t = text.trim();
+  if (!legacyOn()) return useMenu();
   if (t === "ยกเลิก") {
     const d = await callScript({ action: "unsubscribe", userId });
-    return d.ok ? "ยกเลิกการรับแจ้งเตือนแล้ว หากต้องการรับอีกครั้ง พิมพ์ \"ยินยอม\"" : (ERRORS[d.error] || HELP);
+    return d.ok ? "ยกเลิกการรับแจ้งเตือนแล้ว หากต้องการรับอีกครั้ง กดปุ่ม \"ลงทะเบียน\" ที่เมนูด้านล่าง" : (ERRORS[d.error] || useMenu());
   }
   if (t === "ยินยอม") {
     const d = await callScript({ action: "consent", userId });
     if (!d.ok) return ERRORS[d.error] || "ทำรายการไม่สำเร็จ กรุณาลองใหม่";
-    return `ยืนยันแล้ว จะแจ้งเตือนเมื่อ ${d.names.join(", ")} เข้า-ออกวิทยาลัย\nพิมพ์ "ยกเลิก" เมื่อต้องการหยุดรับแจ้งเตือน`;
+    return `ยืนยันแล้ว จะแจ้งเตือนเมื่อ ${d.names.join(", ")} เข้า-ออกวิทยาลัย\nกดปุ่ม "ยกเลิกการแจ้งเตือน" ที่เมนูด้านล่างเมื่อต้องการหยุด`;
   }
   if (/^[A-Za-z0-9]{6}$/.test(t)) {
     const d = await callScript({ action: "bind", userId, code: t });
@@ -52,7 +63,7 @@ async function handleText(userId, text) {
       "การแจ้งเตือนจะใช้ข้อมูลทะเบียนรถและเวลาเข้า-ออกวิทยาลัยของนักเรียน " +
       "หากผู้ปกครองยินยอม พิมพ์ \"ยินยอม\"";
   }
-  return HELP;
+  return useMenu();
 }
 
 module.exports = async (req, res) => {
@@ -77,7 +88,7 @@ module.exports = async (req, res) => {
     if (!userId || !ev.replyToken) continue;
     try {
       let reply = null;
-      if (ev.type === "follow") reply = HELP;
+      if (ev.type === "follow") reply = welcome();
       else if (ev.type === "message" && ev.message && ev.message.type === "text") reply = await handleText(userId, ev.message.text || "");
       if (reply) await lineReply(ev.replyToken, reply);
     } catch (err) {

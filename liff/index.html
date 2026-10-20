@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>V-Gate ลงทะเบียน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<style>
+/* LIFF page opened from the OA's rich menu: ?mode=register or ?mode=cancel. One narrow card. */
+:root {
+  --bg: #eef1f4; --panel: #ffffff; --ink: #17202b; --muted: #5d6a78; --line: #d5dce4;
+  --accent: #e8a400; --accent-ink: #3d2b00; --ok: #1d7a4c; --warn: #b0521a;
+  --font-display: "Chakra Petch", "IBM Plex Sans Thai", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
+    --accent: #f2b52a; --accent-ink: #2a1d00; --ok: #4cc58a; --warn: #f08a4b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
+  --accent: #f2b52a; --accent-ink: #2a1d00; --ok: #4cc58a; --warn: #f08a4b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55; }
+.wrap { max-width: 480px; margin: 0 auto; padding: 24px 16px 40px; display: grid; gap: 16px; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: 24px; margin: 0; line-height: 1.2; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; }
+h2 { font-size: 16px; font-weight: 600; margin: 0; }
+label { font-weight: 500; display: grid; gap: 6px; }
+input[type="text"] { font: 600 22px/1.2 var(--font-display); letter-spacing: .25em; text-transform: uppercase; text-align: center;
+  padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); width: 100%; }
+input[type="text"]:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.consent { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-weight: 400; color: var(--muted); font-size: 14px; }
+.consent input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); }
+button { font: 600 16px/1 var(--font-body); padding: 14px; border-radius: 8px; border: 0; cursor: pointer; width: 100%; min-height: 48px; }
+button.primary { background: var(--accent); color: var(--accent-ink); }
+button.danger { background: transparent; color: var(--warn); border: 1.5px solid var(--warn); }
+button.plain { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+button:disabled { opacity: .5; cursor: default; }
+ul.students { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.students li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.tag { font-size: 13px; white-space: nowrap; }
+.tag.yes { color: var(--ok); }
+.tag.no, .tag.pending { color: var(--muted); }
+.msg { margin: 0; padding: 12px; border-radius: 8px; border: 1px solid var(--line); }
+.msg.ok { border-color: var(--ok); color: var(--ok); }
+.msg.err { border-color: var(--warn); color: var(--warn); }
+.muted { color: var(--muted); margin: 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1 id="title">V-Gate แจ้งเตือนผู้ปกครอง</h1>
+    <p class="sub" id="subtitle">กำลังโหลด…</p>
+  </header>
+
+  <p class="msg" id="msg" role="status" hidden></p>
+
+  <section class="card" id="current" hidden>
+    <h2>นักเรียนที่บัญชีนี้ผูกไว้</h2>
+    <ul class="students" id="students"></ul>
+    <button class="plain" id="resume" type="button" hidden>เปิดรับแจ้งเตือนอีกครั้ง</button>
+  </section>
+
+  <form class="card" id="register" hidden>
+    <h2 id="register-title">ลงทะเบียนรับแจ้งเตือน</h2>
+    <label>รหัสผูกบัญชี 6 หลักที่วิทยาลัยให้ไว้
+      <input type="text" id="code" maxlength="6" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" required pattern="[A-Za-z0-9]{6}">
+    </label>
+    <label class="consent">
+      <input type="checkbox" id="agree" required>
+      <span>ข้าพเจ้ายินยอมให้วิทยาลัยใช้ข้อมูลทะเบียนรถและเวลาเข้า-ออกวิทยาลัยของนักเรียน เพื่อส่งแจ้งเตือนมายังบัญชี LINE นี้ และยกเลิกได้ทุกเมื่อจากเมนู "ยกเลิกการแจ้งเตือน"</span>
+    </label>
+    <button class="primary" type="submit" id="submit">ยืนยันลงทะเบียน</button>
+  </form>
+
+  <section class="card" id="cancel" hidden>
+    <p class="muted">เมื่อยกเลิกแล้ว จะไม่ได้รับแจ้งเตือนของนักเรียนทุกคนด้านบน กลับมาลงทะเบียนใหม่ได้ทุกเมื่อ</p>
+    <button class="danger" type="button" id="cancel-btn">ยกเลิกการแจ้งเตือน</button>
+  </section>
+
+  <button class="plain" type="button" id="close" hidden>ปิดหน้านี้</button>
+</main>
+
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+const ERRORS = {
+  not_found: "ไม่พบรหัสนี้ กรุณาตรวจสอบรหัสอีกครั้ง",
+  bad_code: "รหัสผูกบัญชีต้องเป็นตัวอักษรหรือตัวเลข 6 หลัก",
+  locked: "กรอกรหัสผิดหลายครั้ง กรุณาลองใหม่ภายหลัง หรือติดต่อวิทยาลัย",
+  already_bound: "รหัสนี้ถูกผูกกับบัญชี LINE อื่นแล้ว กรุณาติดต่อวิทยาลัย",
+  not_bound: "บัญชีนี้ยังไม่ได้ลงทะเบียน",
+  bad_token: "ยืนยันตัวตน LINE ไม่สำเร็จ กรุณาปิดหน้านี้แล้วเปิดใหม่จากเมนูในแชต",
+  not_ready: "ระบบยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง",
+};
+const CONSENT_LABEL = { yes: "รับแจ้งเตือนอยู่", no: "ยกเลิกแล้ว", pending: "ยังไม่ได้ยินยอม" };
+const $ = (id) => document.getElementById(id);
+let mode = "register";
+let students = [];
+
+function show(id, on) { $(id).hidden = !on; }
+function message(text, kind) {
+  const el = $("msg");
+  el.textContent = text;
+  el.className = "msg" + (kind ? " " + kind : "");
+  el.hidden = !text;
+}
+
+// A fresh ID token; LINE caches one per login and it expires after about an hour.
+function idToken() {
+  const decoded = liff.getDecodedIDToken();
+  if (!decoded || decoded.exp * 1000 < Date.now() + 60000) {
+    liff.logout();
+    liff.login({ redirectUri: location.href });
+    return null;
+  }
+  return liff.getIDToken();
+}
+
+async function call(action, extra) {
+  const token = idToken();
+  if (!token) return { ok: false, error: "redirecting" };
+  try {
+    const r = await fetch("/api/liff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, idToken: token, ...extra }),
+    });
+    return await r.json();
+  } catch {
+    return { ok: false, error: "not_ready" };
+  }
+}
+
+function errorText(d) { return ERRORS[d.error] || ERRORS.not_ready; }
+
+function render() {
+  const list = $("students");
+  list.replaceChildren();
+  for (const s of students) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = s.name;
+    const tag = document.createElement("span");
+    tag.className = "tag " + s.consent;
+    tag.textContent = CONSENT_LABEL[s.consent] || s.consent;
+    li.append(name, tag);
+    list.append(li);
+  }
+  const active = students.filter((s) => s.consent === "yes");
+  show("current", students.length > 0);
+  if (mode === "cancel") {
+    $("title").textContent = "ยกเลิกการแจ้งเตือน";
+    $("subtitle").textContent = active.length ? "หยุดรับแจ้งเตือนการเข้า-ออกวิทยาลัย" : "บัญชีนี้ไม่ได้รับแจ้งเตือนอยู่";
+    show("cancel", active.length > 0);
+    show("register", false);
+    show("resume", false);
+  } else {
+    $("title").textContent = "ลงทะเบียนรับแจ้งเตือน";
+    $("subtitle").textContent = "รับแจ้งเตือนทาง LINE เมื่อนักเรียนเข้า-ออกวิทยาลัย";
+    $("register-title").textContent = students.length ? "เพิ่มนักเรียนอีกคน" : "กรอกรหัสผูกบัญชี";
+    show("register", true);
+    show("cancel", false);
+    show("resume", students.some((s) => s.consent !== "yes"));
+  }
+}
+
+async function refresh() {
+  const d = await call("status");
+  if (d.error === "redirecting") return false;
+  if (!d.ok) { $("subtitle").textContent = ""; message(errorText(d), "err"); return false; }
+  students = d.students;
+  render();
+  return true;
+}
+
+function done(text) {
+  message(text, "ok");
+  show("close", liff.isInClient());
+}
+
+$("register").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("code").value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) return message(ERRORS.bad_code, "err");
+  $("submit").disabled = true;
+  message("");
+  const d = await call("register", { code });
+  $("submit").disabled = false;
+  if (d.error === "redirecting") return;
+  if (!d.ok) return message(errorText(d), "err");
+  $("code").value = "";
+  $("agree").checked = false;
+  await refresh();
+  done(`ลงทะเบียนสำเร็จ จะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย`);
+});
+
+$("resume").addEventListener("click", async () => {
+  $("resume").disabled = true;
+  const d = await call("resume");
+  $("resume").disabled = false;
+  if (d.error === "redirecting") return;
+  if (!d.ok) return message(errorText(d), "err");
+  await refresh();
+  done("เปิดรับแจ้งเตือนอีกครั้งแล้ว");
+});
+
+$("cancel-btn").addEventListener("click", async () => {
+  if (!confirm("ยืนยันยกเลิกการรับแจ้งเตือน?")) return;
+  $("cancel-btn").disabled = true;
+  const d = await call("cancel");
+  $("cancel-btn").disabled = false;
+  if (d.error === "redirecting") return;
+  if (!d.ok) return message(errorText(d), "err");
+  await refresh();
+  show("cancel", false);
+  done("ยกเลิกการรับแจ้งเตือนแล้ว");
+});
+
+$("close").addEventListener("click", () => liff.closeWindow());
+
+(async function start() {
+  let liffId = "";
+  try { liffId = (await (await fetch("/api/liff")).json()).liffId || ""; } catch { /* handled below */ }
+  if (!liffId || typeof liff === "undefined") { $("subtitle").textContent = ""; return message(ERRORS.not_ready, "err"); }
+  try {
+    await liff.init({ liffId });
+  } catch {
+    $("subtitle").textContent = "";
+    return message(ERRORS.not_ready, "err");
+  }
+  if (!liff.isLoggedIn()) return liff.login({ redirectUri: location.href });
+  // Read the mode after init: LINE passes ?mode=… through liff.state and restores it here.
+  mode = new URLSearchParams(location.search).get("mode") === "cancel" ? "cancel" : "register";
+  await refresh();
+})();
+</script>
+</body>
+</html>

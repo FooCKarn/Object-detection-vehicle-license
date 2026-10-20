@@ -7,7 +7,7 @@
 // "STUDENT_GUARDIAN" sheet:  student_id | student_name | bind_code | line_user_id | consent
 //   One row per guardian. Staff fill student_id, student_name and bind_code (run generateBindCodes()
 //   to fill empty codes; keep the bind_code column formatted as Plain text). The script fills
-//   line_user_id and consent when a guardian binds through the LINE bot.
+//   line_user_id and consent when a guardian registers on the LIFF page (or binds through the bot).
 //   consent: pending (bound, not yet agreed) | yes | no
 //   Rows with student_id = SECURITY receive alerts about blocked / expired / unregistered vehicles.
 //
@@ -33,7 +33,9 @@ function doPost(e) {
     if (!authorized_(body.secret)) return json_({ ok: false, error: "unauthorized" });
 
     switch (body.action) {
-      case "bind": return json_(bind_(body.userId, body.code));
+      case "bind": return json_(bind_(body.userId, body.code, false));
+      case "register": return json_(bind_(body.userId, body.code, true));
+      case "status": return json_(status_(body.userId));
       case "consent": return json_(setConsent_(body.userId, "yes"));
       case "unsubscribe": return json_(setConsent_(body.userId, "no"));
       default: return json_(logReading_(body));
@@ -156,8 +158,10 @@ function guardians_() {
 
 function consenting_(g) { return g.consent === "yes" && g.userId !== ""; }
 
-// A guardian sent their bind code: store their LINE userId on the matching row, consent pending.
-function bind_(userId, code) {
+// A guardian sent their bind code: store their LINE userId on the matching row. From the bot the
+// consent stays pending until they reply "ยินยอม"; the LIFF page asks for consent on the same form,
+// so `agreed` sets it to yes at once.
+function bind_(userId, code, agreed) {
   userId = String(userId || "").trim();
   code = String(code || "").trim().toUpperCase();
   if (!/^U[0-9a-f]{32}$/i.test(userId) || !code) return { ok: false, error: "bad_request" };
@@ -175,9 +179,19 @@ function bind_(userId, code) {
   if (g.userId && g.userId !== userId) return { ok: false, error: "already_bound" };
 
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(GUARDIAN_SHEET);
+  const consent = agreed || g.consent === "yes" ? "yes" : "pending";
   sheet.getRange(g.row, 4).setValue(userId);
-  if (g.consent !== "yes") sheet.getRange(g.row, 5).setValue("pending");
-  return { ok: true, name: g.name || g.studentId, consent: g.consent === "yes" ? "yes" : "pending" };
+  sheet.getRange(g.row, 5).setValue(consent);
+  return { ok: true, name: g.name || g.studentId, consent: consent };
+}
+
+// Every student this LINE user is bound to, with that row's consent, for the LIFF page.
+function status_(userId) {
+  userId = String(userId || "").trim();
+  if (!userId) return { ok: false, error: "bad_request" };
+  const students = guardians_().filter(function (g) { return g.userId === userId; })
+    .map(function (g) { return { name: g.name || g.studentId, consent: g.consent === "yes" ? "yes" : g.consent === "no" ? "no" : "pending" }; });
+  return { ok: true, students: students };
 }
 
 // "ยินยอม" -> yes, "ยกเลิก" -> no, for every row bound to this LINE user.
