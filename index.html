@@ -20,6 +20,7 @@
   --cool: #1f5f8b;
   --ok: #1d7a4c;
   --warn: #b0521a;
+  --bad: #c62828;
   --stage: #1a222c;
   --font-display: "Chakra Petch", "IBM Plex Sans Thai", system-ui, sans-serif;
   --font-body: "IBM Plex Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -28,13 +29,13 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
-    --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --stage: #0b0f14;
+    --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --bad: #f26b6b; --stage: #0b0f14;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
-  --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --stage: #0b0f14;
+  --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --bad: #f26b6b; --stage: #0b0f14;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -106,6 +107,11 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(24px, 
 .prov { font-size: 13.5px; color: var(--muted); }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pill { font-family: var(--font-mono); font-size: 11.5px; padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; }
+/* Database check: green = registered, red = not found / not allowed, grey = checking or unknown */
+.det.found, .det.missing { border: 2px solid var(--db); border-radius: 8px; padding: 12px; background: color-mix(in srgb, var(--db) 9%, transparent); }
+.det.found { --db: var(--ok); } .det.missing { --db: var(--bad); }
+.db { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 6px; font-weight: 600; font-size: 13.5px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+.det.found .db, .det.missing .db { border-color: var(--db); background: var(--db); color: #fff; }
 .pill.hi { color: var(--ok); } .pill.mid { color: var(--cool); } .pill.lo { color: var(--warn); }
 
 /* Log */
@@ -1051,14 +1057,15 @@ tr:last-child td { border-bottom: 0; }
     results.forEach((r, i) => {
       const [bx, by, bw, bh] = r.box;
       const x = fit.x + bx * s, y = fit.y + by * s, w = bw * s, h = bh * s;
-      ctx.save(); ctx.strokeStyle = accent; ctx.lineWidth = 4; ctx.strokeRect(x - 6, y - 6, w + 12, h + 12);
+      const color = r.db && r.db.state === "found" ? css("--ok") || "#1d7a4c" : r.db && r.db.state === "missing" ? css("--bad") || "#c62828" : accent;
+      ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.strokeRect(x - 6, y - 6, w + 12, h + 12);
       const label = `#${i + 1}  ${r.text || "?"}${r.det != null ? "  " + r.det.toFixed(2) : ""}`;
       ctx.font = `600 26px "IBM Plex Sans Thai", "JetBrains Mono", sans-serif`;
       const tw = ctx.measureText(label).width + 18;
       let ly = y - 6 - 38; if (ly < 0) ly = Math.min(H - 38, y + h + 8);
       const lx = Math.min(Math.max(0, x - 6), W - tw);
-      ctx.fillStyle = accent; ctx.fillRect(lx, ly, tw, 38);
-      ctx.fillStyle = "#1a1400"; ctx.textBaseline = "middle"; ctx.fillText(label, lx + 9, ly + 20);
+      ctx.fillStyle = color; ctx.fillRect(lx, ly, tw, 38);
+      ctx.fillStyle = color === accent ? "#1a1400" : "#fff"; ctx.textBaseline = "middle"; ctx.fillText(label, lx + 9, ly + 20);
       ctx.restore();
     });
     if (drag) {
@@ -1147,14 +1154,16 @@ tr:last-child td { border-bottom: 0; }
       return;
     }
     results.forEach((r, i) => {
-      const row = document.createElement("div"); row.className = "det";
+      const db = r.db || { state: "none" };
+      const row = document.createElement("div"); row.className = "det" + (db.state === "found" || db.state === "missing" ? " " + db.state : "");
       const crop = document.createElement("canvas"); crop.className = "crop";
       const [bx, by, bw, bh] = r.box; crop.width = 256; crop.height = Math.max(40, Math.round(256 * bh / bw));
       crop.getContext("2d").drawImage(source, bx, by, bw, bh, 0, 0, crop.width, crop.height);
       const info = document.createElement("div"); info.style.minWidth = "0";
       const detPill = r.det != null ? `<span class="pill ${band(r.det)}">ตรวจจับ ${r.det.toFixed(2)}</span>` : `<span class="pill mid">${r.viaText ? "หาจากข้อความ" : "กรอบที่ลากเอง"}</span>`;
-      info.innerHTML = `<div class="plate-text"></div><div class="prov"></div>
+      info.innerHTML = `<div class="db" role="status"></div><div class="plate-text"></div><div class="prov"></div>
         <div class="meta">${detPill}<span class="pill ${band(r.ocr)}">OCR ตรงกัน ${Math.round(r.ocr * 100)}%</span><span>#${i + 1} · ${Math.round(bw)}×${Math.round(bh)} px</span></div><p class="raw"></p>`;
+      info.querySelector(".db").textContent = dbLabel(db);
       info.querySelector(".plate-text").textContent = r.text || "อ่านตัวอักษรไม่ได้";
       info.querySelector(".prov").textContent = r.prov;
       info.querySelector(".raw").textContent = r.votes.length ? "ผลการอ่านแต่ละรอบ: " + r.votes.map(([t, n]) => `${t} ×${n}`).join(", ") : "OCR ดิบ: " + (r.raw || "—");
@@ -1171,14 +1180,51 @@ tr:last-child td { border-bottom: 0; }
     sheetLabel.textContent = sheetReady ? "บันทึกลง Google Sheet" : (d ? "Google Sheet ยังไม่ได้ตั้งค่า" : "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel");
   }).catch(() => { sheetLabel.textContent = "บันทึกลงชีตได้เฉพาะบนเว็บ Vercel"; });
   const RESULT_TH = { registered: "ลงทะเบียนแล้ว", unregistered: "ไม่พบในทะเบียน", blocked: "ถูกระงับสิทธิ์", expired: "สิทธิ์หมดอายุ" };
-  async function saveToSheet(row) {
+  async function saveToSheet(row, plate) {
     row.sheet = "กำลังบันทึก…"; drawLog();
+    setDb(plate, { state: "wait" });
     try {
       const r = await fetch("api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: row.text, province: row.provForSheet }) });
       const d = await r.json().catch(() => ({}));
       row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id} · ${RESULT_TH[d.result] || d.result || "—"}${d.notified ? ` · แจ้ง LINE ${d.notified} คน` : ""}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
-    } catch { row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้"; }
+      setDb(plate, r.ok && d.ok ? dbFromResult(d.result) : { state: "error", msg: d.error || "HTTP " + r.status });
+    } catch {
+      row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้";
+      setDb(plate, { state: "error", msg: "ต่อเครือข่ายไม่ได้" });
+    }
     drawLog();
+  }
+
+  // ---------- Database check (REGISTER_VEHICLE via /api/lookup, or the reply of /api/log) ----------
+  // found = registered and allowed (green); missing = not registered, blocked or expired (red);
+  // wait / error / none stay neutral.
+  function dbFromResult(result) {
+    if (result === "registered") return { state: "found", result };
+    if (RESULT_TH[result]) return { state: "missing", result };
+    return { state: "error", msg: "ผลตรวจไม่รู้จัก" };
+  }
+  function dbLabel(db) {
+    switch (db.state) {
+      case "found": return "✓ พบในฐานข้อมูล";
+      case "missing": return db.result === "unregistered" ? "✕ ไม่พบในฐานข้อมูล" : "✕ พบในฐานข้อมูล แต่" + RESULT_TH[db.result];
+      case "wait": return "กำลังตรวจสอบฐานข้อมูล…";
+      case "error": return "ตรวจสอบฐานข้อมูลไม่ได้" + (db.msg ? `: ${db.msg}` : "");
+      default: return "ไม่ได้ตรวจสอบฐานข้อมูล (อ่านทะเบียนไม่ได้)";
+    }
+  }
+  function setDb(plate, db) {
+    plate.db = db;
+    if (results.includes(plate)) { paint(); renderReadout(); }
+  }
+  async function lookupPlate(plate, province) {
+    setDb(plate, { state: "wait" });
+    try {
+      const r = await fetch("api/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: plate.text, province }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) return setDb(plate, dbFromResult(d.result));
+      const msg = r.status === 404 ? "ใช้ได้เฉพาะบนเว็บ Vercel" : r.status === 503 ? "ยังไม่ได้ตั้งค่า Apps Script" : d.error || "HTTP " + r.status;
+      setDb(plate, { state: "error", msg });
+    } catch { setDb(plate, { state: "error", msg: "ต่อเครือข่ายไม่ได้" }); }
   }
 
   const logRows = [];
@@ -1190,7 +1236,10 @@ tr:last-child td { border-bottom: 0; }
       const row = { now, name: current.name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
         provForSheet: r.prov === "อ่านจังหวัดไม่ได้" ? "" : r.prov };
       logRows.unshift(row);
-      if (r.text && sheetReady && sheetOn.checked) { if (isSample) row.sheet = "ไม่บันทึกภาพตัวอย่าง"; else saveToSheet(row); }
+      if (!r.text) return;
+      // a logged reading gets its database result from the log reply; anything else is only looked up
+      if (sheetReady && sheetOn.checked && !isSample) saveToSheet(row, r);
+      else { if (sheetReady && sheetOn.checked) row.sheet = "ไม่บันทึกภาพตัวอย่าง"; lookupPlate(r, row.provForSheet); }
     });
     drawLog();
   }
