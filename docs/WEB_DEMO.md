@@ -15,7 +15,7 @@ No build step; Vercel serves the folder as static files. To run locally: `npx se
 
 ## Saving readings to Google Sheets and checking registration
 
-Each plate read from an uploaded image (not the built-in samples) is sent to
+Each plate read from an uploaded image is sent to
 `/api/log`, a Vercel function that forwards it to an Apps Script web app on the
 LICENSE LOG sheet. The script checks the plate against the `REGISTER_VEHICLE` sheet and
 appends `RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
@@ -23,7 +23,7 @@ appends `RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
 
 Every reading is also coloured by that result: green "พบในฐานข้อมูล" for `registered`, red for
 `unregistered` ("ไม่พบในฐานข้อมูล") and for `blocked` / `expired` (found but not allowed), and grey
-while checking or when the check fails. Readings that are not logged (samples, or logging switched
+while checking or when the check fails. Readings that are not logged (logging switched
 off) get their result from `/api/lookup`, which runs the same check through the script's `lookup`
 action without writing a row or sending LINE messages. After updating `Code.gs`, deploy a new
 version of the web app (step 4 below) or the lookup answers "Apps Script needs a new deployment".
