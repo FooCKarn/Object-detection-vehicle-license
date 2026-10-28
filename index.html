@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>PlateScan Demo</title>
+<title>PlateScan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Sarabun:wght@500;600&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -72,11 +72,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(24px, 
 .drop-hint { position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 600; background: rgba(0,0,0,.45); }
 
 .controls { display: flex; flex-wrap: wrap; gap: 14px 20px; padding: 14px 16px; align-items: center; border-top: 1px solid var(--line); }
-.samples { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { font: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
-.chip:hover { border-color: var(--muted); }
-.chip[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--panel); }
-.chip:focus-visible, .btn:focus-visible, input:focus-visible { outline: 2px solid var(--cool); outline-offset: 2px; }
+.btn:focus-visible, input:focus-visible { outline: 2px solid var(--cool); outline-offset: 2px; }
 .btn { font: inherit; font-weight: 600; font-size: 14px; padding: 8px 14px; border-radius: 6px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
 .btn:disabled { opacity: .55; cursor: progress; }
@@ -158,7 +154,6 @@ tr:last-child td { border-bottom: 0; }
         <div class="drop-hint" id="dropHint" hidden>วางไฟล์ภาพที่นี่</div>
       </div>
       <div class="controls">
-        <div class="samples" role="group" aria-label="ภาพตัวอย่าง" id="samples"></div>
         <span class="spacer"></span>
         <label class="btn ghost" for="file">อัปโหลดภาพ</label>
         <input id="file" type="file" accept="image/*" hidden>
@@ -197,7 +192,7 @@ tr:last-child td { border-bottom: 0; }
     </div>
   </section>
 
-  <p class="note"><b>เกี่ยวกับเดโมนี้:</b> การหาตำแหน่งป้ายใช้โมเดล YOLOv9-t ที่ฝึกมาสำหรับป้ายทะเบียนโดยเฉพาะ (open-image-models, MIT) และการอ่านตัวอักษรใช้ Tesseract OCR ภาษาไทย ทั้งสองส่วนทำงานในเบราว์เซอร์ ภาพไม่ถูกส่งออกไปที่ใด OCR จะอ่านป้ายเดียวกัน 8 รอบในขนาดต่างกัน แล้วเลือกตัวอักษรที่อ่านได้ตรงกันมากที่สุดทีละตำแหน่ง ถ้ากรอบผิดที่ ให้ลากกรอบครอบป้ายเอง</p>
+  <p class="note"><b>เกี่ยวกับระบบ:</b> การหาตำแหน่งป้ายใช้โมเดล YOLOv9-t ที่ฝึกมาสำหรับป้ายทะเบียนโดยเฉพาะ (open-image-models, MIT) และการอ่านตัวอักษรใช้ Tesseract OCR ภาษาไทย ทั้งสองส่วนทำงานในเบราว์เซอร์ ภาพไม่ถูกส่งออกไปที่ใด OCR จะอ่านป้ายเดียวกัน 8 รอบในขนาดต่างกัน แล้วเลือกตัวอักษรที่อ่านได้ตรงกันมากที่สุดทีละตำแหน่ง ถ้ากรอบผิดที่ ให้ลากกรอบครอบป้ายเอง</p>
 </div>
 
 <script src="lib/tesseract.min.js"></script>
@@ -211,63 +206,6 @@ tr:last-child td { border-bottom: 0; }
   const stage = document.getElementById("stage");
   const W = view.width, H = view.height;
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-
-  // ---------- Sample scenes (drawn on canvas) ----------
-  function roundRect(g, x, y, w, h, r) {
-    g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
-    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
-  }
-  function drawPlate(g, x, y, w, h, top, prov, bg = "#f7f7f2") {
-    g.save();
-    g.fillStyle = bg; g.strokeStyle = "#111"; g.lineWidth = Math.max(2, w * 0.02);
-    roundRect(g, x, y, w, h, h * 0.08); g.fill(); g.stroke();
-    g.fillStyle = "#111"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.font = `600 ${h * 0.46}px "Sarabun", "IBM Plex Sans Thai", sans-serif`;
-    g.fillText(top, x + w / 2, y + h * 0.37, w * 0.9);
-    g.font = `500 ${h * 0.22}px "Sarabun", "IBM Plex Sans Thai", sans-serif`;
-    g.fillText(prov, x + w / 2, y + h * 0.79, w * 0.85);
-    g.restore();
-  }
-  function ground(g, sky1, sky2, road) {
-    const sk = g.createLinearGradient(0, 0, 0, H * 0.55); sk.addColorStop(0, sky1); sk.addColorStop(1, sky2);
-    g.fillStyle = sk; g.fillRect(0, 0, W, H);
-    g.fillStyle = road; g.fillRect(0, H * 0.55, W, H * 0.45);
-    g.strokeStyle = "rgba(255,255,255,.55)"; g.lineWidth = 6; g.setLineDash([60, 50]);
-    g.beginPath(); g.moveTo(0, H * 0.93); g.lineTo(W, H * 0.93); g.stroke(); g.setLineDash([]);
-  }
-  function building(g) {
-    for (let i = 0; i < 7; i++) {
-      const bx = i * 190 - 20, bh = 160 + ((i * 73) % 140);
-      g.fillStyle = i % 2 ? "#8b96a3" : "#a3adb8"; g.fillRect(bx, H * 0.55 - bh, 170, bh);
-      g.fillStyle = "rgba(255,255,255,.35)";
-      for (let r = 0; r < bh / 40 - 1; r++) for (let c = 0; c < 4; c++) g.fillRect(bx + 16 + c * 38, H * 0.55 - bh + 16 + r * 40, 22, 22);
-    }
-  }
-  function carRear(g, cx, by, s, body, top, prov) {
-    const w = 520 * s, h = 300 * s, x = cx - w / 2, y = by - h;
-    g.fillStyle = "rgba(0,0,0,.35)"; g.beginPath(); g.ellipse(cx, by + 6 * s, w * 0.55, 22 * s, 0, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#15191e"; g.fillRect(x + 30 * s, by - 40 * s, 70 * s, 50 * s); g.fillRect(x + w - 100 * s, by - 40 * s, 70 * s, 50 * s);
-    g.fillStyle = body; roundRect(g, x + 50 * s, y - 120 * s, w - 100 * s, 150 * s, 40 * s); g.fill();
-    g.fillStyle = "rgba(170,200,225,.85)"; roundRect(g, x + 85 * s, y - 95 * s, w - 170 * s, 95 * s, 22 * s); g.fill();
-    g.fillStyle = body; roundRect(g, x, y, w, h - 30 * s, 36 * s); g.fill();
-    g.fillStyle = "rgba(0,0,0,.18)"; g.fillRect(x, y + h * 0.55, w, h * 0.35 - 30 * s);
-    g.fillStyle = "#c8261f"; roundRect(g, x + 18 * s, y + 40 * s, 95 * s, 46 * s, 10 * s); g.fill(); roundRect(g, x + w - 113 * s, y + 40 * s, 95 * s, 46 * s, 10 * s); g.fill();
-    drawPlate(g, cx - 110 * s, y + 112 * s, 220 * s, 96 * s, top, prov);
-  }
-  const SAMPLES = [
-    { id: "close", label: "ป้ายระยะใกล้", draw(g) {
-        g.fillStyle = "#3b4048"; g.fillRect(0, 0, W, H);
-        drawPlate(g, 140, 170, 1000, 450, "กท 2058", "ฉะเชิงเทรา");
-    } },
-    { id: "gate", label: "รถเก๋ง · ทางเข้า", draw(g) {
-        ground(g, "#7fb2d9", "#d7e6f0", "#55595f"); building(g);
-        carRear(g, 620, 780, 1.4, "#e9ecef", "1กข 1234", "กรุงเทพมหานคร");
-    } },
-    { id: "street", label: "รถสีแดง · ถนน", draw(g) {
-        ground(g, "#f0b27a", "#f7dcc1", "#4d4f54"); building(g);
-        carRear(g, 560, 790, 1.25, "#a3242b", "ขค 5678", "เชียงใหม่");
-    } }
-  ];
 
   // ---------- OCR engine ----------
   const bar = document.getElementById("bar");
@@ -1049,7 +987,13 @@ tr:last-child td { border-bottom: 0; }
   let fit = { x: 0, y: 0, s: 1 }, drag = null;
   function paint() {
     ctx.fillStyle = css("--stage") || "#111"; ctx.fillRect(0, 0, W, H);
-    if (!source) return;
+    if (!source) {
+      ctx.fillStyle = css("--muted") || "#888"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `500 30px "IBM Plex Sans Thai", sans-serif`;
+      ctx.fillText("อัปโหลดหรือวางภาพเพื่อเริ่มอ่านป้ายทะเบียน", W / 2, H / 2);
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+      return;
+    }
     const s = Math.min(W / source.width, H / source.height);
     fit = { s, x: (W - source.width * s) / 2, y: (H - source.height * s) / 2 };
     ctx.drawImage(source, fit.x, fit.y, source.width * s, source.height * s);
@@ -1230,7 +1174,6 @@ tr:last-child td { border-bottom: 0; }
   const logRows = [];
   function logRun(total) {
     const now = new Date().toLocaleTimeString("th-TH", { hour12: false });
-    const isSample = !!current.sample;
     if (!results.length) logRows.unshift({ now, name: current.name, text: "ไม่พบ", prov: "—", conf: "—", total, sheet: "—" });
     results.slice().reverse().forEach(r => {
       const row = { now, name: current.name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
@@ -1238,8 +1181,8 @@ tr:last-child td { border-bottom: 0; }
       logRows.unshift(row);
       if (!r.text) return;
       // a logged reading gets its database result from the log reply; anything else is only looked up
-      if (sheetReady && sheetOn.checked && !isSample) saveToSheet(row, r);
-      else { if (sheetReady && sheetOn.checked) row.sheet = "ไม่บันทึกภาพตัวอย่าง"; lookupPlate(r, row.provForSheet); }
+      if (sheetReady && sheetOn.checked) saveToSheet(row, r);
+      else lookupPlate(r, row.provForSheet);
     });
     drawLog();
   }
@@ -1255,19 +1198,6 @@ tr:last-child td { border-bottom: 0; }
   }
 
   // ---------- Inputs ----------
-  const samplesEl = document.getElementById("samples");
-  SAMPLES.forEach((s, i) => {
-    const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = s.label; b.dataset.id = s.id;
-    b.addEventListener("click", () => loadSample(i)); samplesEl.append(b);
-  });
-  function setPressed(id) { samplesEl.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c.dataset.id === id))); }
-  function loadSample(i) {
-    if (running) return;
-    const s = SAMPLES[i], c = document.createElement("canvas"); c.width = W; c.height = H; s.draw(c.getContext("2d"));
-    source = c; current = { name: s.label, sample: true };
-    document.getElementById("srcLabel").textContent = "ภาพตัวอย่าง · " + s.label;
-    setPressed(s.id); run();
-  }
   function loadFile(f) {
     if (!f || !f.type.startsWith("image/") || running) return;
     const url = URL.createObjectURL(f), img = new Image();
@@ -1277,7 +1207,7 @@ tr:last-child td { border-bottom: 0; }
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
       source = c; current = { name: f.name || "ภาพที่วาง" };
       document.getElementById("srcLabel").textContent = "ภาพที่อัปโหลด · " + current.name;
-      setPressed(null); run();
+      run();
     };
     img.onerror = () => { document.getElementById("readout").innerHTML = '<p class="empty">เปิดไฟล์นี้ไม่ได้ ลองใช้ภาพ JPG หรือ PNG</p>'; };
     img.src = url;
@@ -1307,8 +1237,11 @@ tr:last-child td { border-bottom: 0; }
   // for testing from the console or an automated harness
   window.PlateScan = { detectPlates, readAny, readPlate, readMoto, readRow, motoRows, prep, matchProvince, get source() { return source; } };
 
-  const start = () => loadSample(0);
+  const start = () => paint();
   (document.fonts?.ready || Promise.resolve()).then(start, start);
+  allReady.then(() => {
+    if (!source) document.getElementById("readout").innerHTML = '<p class="empty">อัปโหลดภาพรถหรือป้ายทะเบียน ลากไฟล์มาวางบนภาพ หรือวางภาพจากคลิปบอร์ด (Ctrl+V) เพื่อเริ่มอ่าน</p>';
+  });
 })();
 </script>
 </body>
