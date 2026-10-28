@@ -21,6 +21,13 @@ LICENSE LOG sheet. The script checks the plate against the `REGISTER_VEHICLE` sh
 appends `RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT`. RESULT is one of
 `registered`, `blocked`, `expired`, `unregistered`, and the page shows it next to each reading.
 
+Every reading is also coloured by that result: green "พบในฐานข้อมูล" for `registered`, red for
+`unregistered` ("ไม่พบในฐานข้อมูล") and for `blocked` / `expired` (found but not allowed), and grey
+while checking or when the check fails. Readings that are not logged (samples, or logging switched
+off) get their result from `/api/lookup`, which runs the same check through the script's `lookup`
+action without writing a row or sending LINE messages. After updating `Code.gs`, deploy a new
+version of the web app (step 4 below) or the lookup answers "Apps Script needs a new deployment".
+
 Requests to Apps Script must carry a shared secret (script property `SECRET`); without
 it the script rejects everything.
 

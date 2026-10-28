@@ -38,6 +38,7 @@ function doPost(e) {
       case "status": return json_(status_(body.userId));
       case "consent": return json_(setConsent_(body.userId, "yes"));
       case "unsubscribe": return json_(setConsent_(body.userId, "no"));
+      case "lookup": return json_(lookup_(body));
       default: return json_(logReading_(body));
     }
   } catch (err) {
@@ -65,6 +66,14 @@ function logReading_(body) {
   const time = Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm:ss");
   sheet.appendRow([id, time, license, province, checked.result]);
   return { ok: true, id: id, time: time, result: checked.result, notify: notify_(checked, license) };
+}
+
+// Registration check only, for the page's green / red badge: nothing is logged and nobody is notified.
+// The plate comes in `plate` (not `license`) so an older deployment refuses it instead of logging it.
+function lookup_(body) {
+  const plate = clean_(body.plate, 20);
+  if (!plate) return { ok: false, error: "plate is required" };
+  return { ok: true, result: check_(plate, clean_(body.province, 40)).result };
 }
 
 // Who should hear about this reading. LINE user ids go back to the Vercel function, which holds
