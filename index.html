@@ -130,6 +130,15 @@ th.status, td.status { text-align: center; }
 .raw { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
 .hint { font-size: 13px; color: var(--muted); }
 
+/* Camera: live preview sits over the canvas; a captured frame goes to the canvas like an upload */
+.stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage); }
+.controls[hidden], .stage video[hidden], .cam-note[hidden], .btn[hidden] { display: none; }
+.live-tag { position: absolute; top: 10px; left: 10px; font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .08em; padding: 3px 8px; border-radius: 4px; background: var(--bad); color: #fff; pointer-events: none; }
+.stage:not(.live) .live-tag { display: none; }
+.cam-note { color: var(--warn); font-size: 13px; flex-basis: 100%; }
+/* the phone's own camera app only makes sense on touch devices */
+@media (hover: hover) and (pointer: fine) { .phone-only { display: none; } }
+
 /* Footer: department and college address */
 .site-foot { border-top: 1px solid var(--line); padding-top: 16px; text-align: right; color: var(--cool); }
 .site-foot p { margin: 0; }
@@ -145,7 +154,7 @@ th.status, td.status { text-align: center; }
       <div class="brand-mark" aria-hidden="true">กข</div>
       <div>
         <h1>PlateScan · อ่านป้ายทะเบียน</h1>
-        <p class="sub">อัปโหลดภาพรถหรือภาพป้ายทะเบียน โมเดล YOLOv9 ที่ฝึกมาเพื่อหาป้ายทะเบียนจะตีกรอบ แล้ว OCR ภาษาไทยอ่านหมวด เลขทะเบียน และจังหวัด ทั้งหมดทำงานในเบราว์เซอร์</p>
+        <p class="sub">อัปโหลดภาพ หรือถ่ายจากกล้อง webcam / มือถือ โมเดล YOLOv9 ที่ฝึกมาเพื่อหาป้ายทะเบียนจะตีกรอบ แล้ว OCR ภาษาไทยอ่านหมวด เลขทะเบียน และจังหวัด ทั้งหมดทำงานในเบราว์เซอร์</p>
       </div>
     </div>
     <span class="demo-flag" id="engineFlag">กำลังโหลด OCR…</span>
@@ -160,14 +169,27 @@ th.status, td.status { text-align: center; }
       <div class="loadbar" aria-hidden="true"><i id="bar"></i></div>
       <div class="stage" id="stage">
         <canvas id="view" width="1280" height="800"></canvas>
+        <video id="cam" playsinline muted hidden></video>
+        <span class="live-tag" aria-hidden="true">● LIVE</span>
         <div class="scanline"></div>
         <div class="drop-hint" id="dropHint" hidden>วางไฟล์ภาพที่นี่</div>
       </div>
       <div class="controls">
+        <button class="btn ghost" id="camOn" type="button">ใช้กล้อง</button>
+        <label class="btn ghost phone-only" for="snap">ถ่ายด้วยแอปกล้อง</label>
+        <input id="snap" type="file" accept="image/*" capture="environment" hidden>
         <span class="spacer"></span>
         <label class="btn ghost" for="file">อัปโหลดภาพ</label>
         <input id="file" type="file" accept="image/*" hidden>
         <button class="btn" id="run" type="button">อ่านป้ายอีกครั้ง</button>
+        <p class="cam-note" id="camNote" role="alert" hidden></p>
+      </div>
+      <div class="controls" id="camBar" hidden>
+        <button class="btn" id="shot" type="button">ถ่ายภาพและอ่านป้าย</button>
+        <button class="btn ghost" id="flip" type="button" hidden>สลับกล้อง</button>
+        <label class="thr" for="auto"><input id="auto" type="checkbox" style="width:auto"> ถ่ายอัตโนมัติ</label>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="camOff" type="button">ปิดกล้อง</button>
       </div>
       <div class="controls" style="border-top-style:dashed">
         <span class="hint">อ่านไม่เจอหรือกรอบผิด? ลากเมาส์ (หรือนิ้ว) ครอบป้ายบนภาพ ระบบจะอ่านเฉพาะบริเวณนั้น</span>
@@ -1005,7 +1027,7 @@ th.status, td.status { text-align: center; }
     if (!source) {
       ctx.fillStyle = css("--muted") || "#888"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.font = `500 30px "IBM Plex Sans Thai", sans-serif`;
-      ctx.fillText("อัปโหลดหรือวางภาพเพื่อเริ่มอ่านป้ายทะเบียน", W / 2, H / 2);
+      ctx.fillText("อัปโหลดภาพ หรือกด “ใช้กล้อง” เพื่อเริ่มอ่านป้ายทะเบียน", W / 2, H / 2);
       ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
       return;
     }
@@ -1038,7 +1060,8 @@ th.status, td.status { text-align: center; }
   const setStep = (k, cls, ms) => { const li = pipe.find(l => l.dataset.k === k); li.className = cls; li.querySelector(".ms").textContent = ms != null ? (ms < 1000 ? ms.toFixed(0) + " ms" : (ms / 1000).toFixed(2) + " s") : ""; };
   let running = false;
 
-  async function run(region) {
+  // opts.auto: a frame from auto-capture, logged only when it shows a plate not logged in the last 30 s
+  async function run(region, opts = {}) {
     if (!source || running) return;
     running = true;
     const runBtn = document.getElementById("run"); runBtn.disabled = true;
@@ -1096,7 +1119,8 @@ th.status, td.status { text-align: center; }
     stage.classList.remove("busy");
     const total = performance.now() - T0;
     document.getElementById("total").textContent = "รวม " + (total / 1000).toFixed(2) + " s";
-    paint(); renderReadout(); logRun(total);
+    paint(); renderReadout();
+    if (!opts.auto || freshPlates()) logRun(total);
     running = false; runBtn.disabled = false;
   }
 
@@ -1226,13 +1250,14 @@ th.status, td.status { text-align: center; }
   // ---------- Inputs ----------
   function loadFile(f) {
     if (!f || !f.type.startsWith("image/") || running) return;
+    if (cam) { auto.checked = false; showLive(false); }
     const url = URL.createObjectURL(f), img = new Image();
     img.onload = () => {
       const c = document.createElement("canvas"), k = Math.min(1, 2000 / Math.max(img.width, img.height));
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-      source = c; current = { name: f.name || "ภาพที่วาง" };
-      document.getElementById("srcLabel").textContent = "ภาพที่อัปโหลด · " + current.name;
+      source = c; current = { name: f.name || "ภาพที่วาง" }; current.label = "ภาพที่อัปโหลด · " + current.name;
+      document.getElementById("srcLabel").textContent = current.label;
       run();
     };
     img.onerror = () => { document.getElementById("readout").innerHTML = '<p class="empty">เปิดไฟล์นี้ไม่ได้ ลองใช้ภาพ JPG หรือ PNG</p>'; };
@@ -1244,6 +1269,7 @@ th.status, td.status { text-align: center; }
   stage.addEventListener("dragover", e => { e.preventDefault(); hint.hidden = false; });
   stage.addEventListener("dragleave", () => { hint.hidden = true; });
   stage.addEventListener("drop", e => { e.preventDefault(); hint.hidden = true; loadFile(e.dataTransfer.files[0]); });
+  document.getElementById("snap").addEventListener("change", e => { loadFile(e.target.files[0]); e.target.value = ""; });
   window.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])][0]; if (f) loadFile(f); });
 
   // Drag a box on the image to read just that region
@@ -1260,13 +1286,122 @@ th.status, td.status { text-align: center; }
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", paint);
 
+  // ---------- Camera (webcam or phone, needs HTTPS) ----------
+  const video = document.getElementById("cam"), camBar = document.getElementById("camBar"), camNote = document.getElementById("camNote");
+  const camOn = document.getElementById("camOn"), shot = document.getElementById("shot"), flip = document.getElementById("flip"), auto = document.getElementById("auto");
+  let cam = null; // { stream, deviceId, facing, devices }
+  function camError(msg) { camNote.textContent = msg; camNote.hidden = !msg; }
+  function camErrorText(e) {
+    switch (e && e.name) {
+      case "NotAllowedError": case "SecurityError":
+        return "ไม่ได้รับอนุญาตให้ใช้กล้อง กดไอคอนกล้องหรือแม่กุญแจที่แถบที่อยู่ เลือก “อนุญาต” แล้วกด “ใช้กล้อง” อีกครั้ง หรือใช้ปุ่มอัปโหลดภาพแทน";
+      case "NotFoundError": case "OverconstrainedError":
+        return "ไม่พบกล้องบนอุปกรณ์นี้ ใช้ปุ่มอัปโหลดภาพแทนได้";
+      case "NotReadableError": case "AbortError":
+        return "เปิดกล้องไม่ได้ กล้องอาจถูกใช้งานโดยแอปหรือแท็บอื่นอยู่ ปิดแล้วลองอีกครั้ง";
+      default: return "เปิดกล้องไม่ได้" + (e && e.message ? `: ${e.message}` : "");
+    }
+  }
+  function showLive(on) {
+    video.hidden = !on; stage.classList.toggle("live", on);
+    shot.textContent = on ? "ถ่ายภาพและอ่านป้าย" : "ถ่ายใหม่";
+    if (on) document.getElementById("srcLabel").textContent = "กล้อง · ภาพสด";
+  }
+  function stopStream() { if (cam) cam.stream.getTracks().forEach(t => t.stop()); }
+  // want: { facing: "environment" | "user" } or { deviceId }
+  async function startCam(want = { facing: "environment" }) {
+    camError("");
+    if (!navigator.mediaDevices?.getUserMedia)
+      return camError(window.isSecureContext ? "เบราว์เซอร์นี้ใช้กล้องไม่ได้ ลอง Chrome หรือ Safari รุ่นใหม่ หรือใช้ปุ่มอัปโหลดภาพแทน" : "ต้องเปิดหน้านี้ผ่าน HTTPS จึงจะใช้กล้องได้");
+    const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const video0 = want.deviceId ? { deviceId: { exact: want.deviceId }, ...size } : { facingMode: { ideal: want.facing }, ...size };
+    camOn.disabled = true;
+    let stream;
+    try {
+      stopStream();
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: video0, audio: false }); }
+      catch (e) { if (e.name !== "OverconstrainedError") throw e; stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
+    } catch (e) {
+      cam = null; camBar.hidden = true; camOn.hidden = false; camOn.disabled = false; showLive(false); paint();
+      return camError(camErrorText(e));
+    }
+    camOn.disabled = false;
+    const set = stream.getVideoTracks()[0].getSettings();
+    // device labels and the full list only show up once permission is granted
+    const devices = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter(d => d.kind === "videoinput");
+    cam = { stream, deviceId: set.deviceId, facing: set.facingMode || want.facing || "", devices };
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    flip.hidden = devices.length < 2;
+    camOn.hidden = true; camBar.hidden = false; showLive(true);
+  }
+  function stopCam() {
+    auto.checked = false; stopStream(); cam = null; video.srcObject = null;
+    camBar.hidden = true; camOn.hidden = false; showLive(false);
+    if (!source) document.getElementById("srcLabel").textContent = "ภาพต้นฉบับ";
+    else if (current) document.getElementById("srcLabel").textContent = current.label;
+  }
+  async function flipCam() {
+    if (!cam || cam.devices.length < 2) return;
+    const before = cam.deviceId;
+    // phones: front <-> back by facing; webcams (no facing, or facing did not change the device): next device in the list
+    if (cam.facing) await startCam({ facing: cam.facing === "user" ? "environment" : "user" });
+    if (cam && (!cam.facing || cam.deviceId === before)) {
+      const i = cam.devices.findIndex(d => d.deviceId === before);
+      const next = cam.devices[(i + 1) % cam.devices.length];
+      if (next && next.deviceId !== cam.deviceId) await startCam({ deviceId: next.deviceId });
+    }
+  }
+  function capture(isAuto = false) {
+    if (!cam || running || !video.videoWidth) return Promise.resolve();
+    const k = Math.min(1, 2000 / Math.max(video.videoWidth, video.videoHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(video.videoWidth * k); c.height = Math.round(video.videoHeight * k);
+    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    source = c;
+    const at = new Date().toLocaleTimeString("th-TH", { hour12: false });
+    current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    document.getElementById("srcLabel").textContent = current.label;
+    showLive(false);
+    return run(null, { auto: isAuto });
+  }
+  // auto-capture: show the result briefly, go back to the live view, grab the next frame
+  const recent = new Map();
+  function freshPlates() {
+    const now = Date.now(), texts = results.filter(r => r.text).map(r => r.text);
+    for (const [t, at] of recent) if (now - at > 30000) recent.delete(t);
+    const fresh = texts.some(t => !recent.has(t));
+    texts.forEach(t => recent.set(t, now));
+    return fresh;
+  }
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  let autoLoop = null;
+  function startAuto() {
+    if (autoLoop) return;
+    autoLoop = (async () => {
+      while (auto.checked && cam) {
+        showLive(true); await wait(1200);
+        if (!auto.checked || !cam) break;
+        if (!running) { await capture(true); await wait(1500); }
+      }
+      autoLoop = null;
+    })();
+  }
+  camOn.addEventListener("click", () => startCam());
+  document.getElementById("camOff").addEventListener("click", stopCam);
+  flip.addEventListener("click", flipCam);
+  shot.addEventListener("click", () => { if (!cam) return; if (video.hidden) { auto.checked = false; showLive(true); } else capture(); });
+  auto.addEventListener("change", () => { if (auto.checked) startAuto(); });
+  // phones pause the camera in the background; release it so it is not left half-open
+  document.addEventListener("visibilitychange", () => { if (document.hidden && cam) stopCam(); });
+
   // for testing from the console or an automated harness
   window.PlateScan = { detectPlates, readAny, readPlate, readMoto, readRow, motoRows, prep, matchProvince, get source() { return source; } };
 
   const start = () => paint();
   (document.fonts?.ready || Promise.resolve()).then(start, start);
   allReady.then(() => {
-    if (!source) document.getElementById("readout").innerHTML = '<p class="empty">อัปโหลดภาพรถหรือป้ายทะเบียน ลากไฟล์มาวางบนภาพ หรือวางภาพจากคลิปบอร์ด (Ctrl+V) เพื่อเริ่มอ่าน</p>';
+    if (!source) document.getElementById("readout").innerHTML = '<p class="empty">อัปโหลดภาพรถหรือป้ายทะเบียน กด “ใช้กล้อง” เพื่อถ่ายจาก webcam หรือกล้องมือถือ ลากไฟล์มาวางบนภาพ หรือวางภาพจากคลิปบอร์ด (Ctrl+V) เพื่อเริ่มอ่าน</p>';
   });
 })();
 </script>
