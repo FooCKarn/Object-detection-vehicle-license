@@ -117,8 +117,10 @@ th, td { text-align: left; padding: 8px 16px; border-bottom: 1px solid var(--lin
 th { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
 td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 tr:last-child td { border-bottom: 0; }
-.dbdot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); opacity: .45; vertical-align: middle; }
+.dbdot { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); opacity: .45; vertical-align: middle; }
 .dbdot.found { background: var(--ok); opacity: 1; } .dbdot.missing { background: var(--bad); opacity: 1; }
+th.status { font-family: var(--font-body); font-size: 13.5px; letter-spacing: 0; text-transform: none; color: var(--cool); font-weight: 600; }
+th.status, td.status { text-align: center; }
 
 .note { color: var(--muted); font-size: 13.5px; max-width: 75ch; margin: 0; }
 .note b { color: var(--ink); font-weight: 600; }
@@ -127,6 +129,12 @@ tr:last-child td { border-bottom: 0; }
 .loadbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 .raw { font-family: var(--font-mono); font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
 .hint { font-size: 13px; color: var(--muted); }
+
+/* Footer: department and college address */
+.site-foot { border-top: 1px solid var(--line); padding-top: 16px; text-align: right; color: var(--cool); }
+.site-foot p { margin: 0; }
+.site-foot .dept { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+.site-foot .addr { font-size: 14px; }
 </style>
 </head>
 <body>
@@ -188,13 +196,18 @@ tr:last-child td { border-bottom: 0; }
       <label class="thr" for="sheetOn"><input id="sheetOn" type="checkbox" style="width:auto" disabled> <span id="sheetLabel">บันทึกลง Google Sheet</span></label></div>
     <div class="log-wrap">
       <table>
-        <thead><tr><th>เวลา</th><th>ภาพ</th><th>ทะเบียน</th><th>จังหวัด</th><th>ฐานข้อมูล</th><th>ความมั่นใจ</th><th>ใช้เวลา</th><th>Google Sheet</th></tr></thead>
+        <thead><tr><th>เวลา</th><th>ภาพ</th><th>ทะเบียน</th><th>จังหวัด</th><th>ความมั่นใจ</th><th>ใช้เวลา</th><th>Google Sheet</th><th class="status">สถานะ (Status)</th></tr></thead>
         <tbody id="log"><tr><td colspan="8" class="empty">ยังไม่มีรายการ</td></tr></tbody>
       </table>
     </div>
   </section>
 
   <p class="note"><b>เกี่ยวกับระบบ:</b> การหาตำแหน่งป้ายใช้โมเดล YOLOv9-t ที่ฝึกมาสำหรับป้ายทะเบียนโดยเฉพาะ (open-image-models, MIT) และการอ่านตัวอักษรใช้ Tesseract OCR ภาษาไทย ทั้งสองส่วนทำงานในเบราว์เซอร์ ภาพไม่ถูกส่งออกไปที่ใด OCR จะอ่านป้ายเดียวกัน 8 รอบในขนาดต่างกัน แล้วเลือกตัวอักษรที่อ่านได้ตรงกันมากที่สุดทีละตำแหน่ง ถ้ากรอบผิดที่ ให้ลากกรอบครอบป้ายเอง</p>
+
+  <footer class="site-foot">
+    <p class="dept">แผนกวิชา เทคโนโลยีธุรกิจดิจิทัล</p>
+    <p class="addr">วิทยาลัยอาชีวศึกษาพิษณุโลก 60 ถนนวังจันทน์ อ.เมือง จ.พิษณุโลก 65000</p>
+  </footer>
 </div>
 
 <script src="lib/tesseract.min.js"></script>
@@ -1201,10 +1214,10 @@ tr:last-child td { border-bottom: 0; }
     const tb = document.getElementById("log"); tb.innerHTML = "";
     logRows.slice(0, 12).forEach(r => {
       const tr = document.createElement("tr");
-      [r.now, r.name, r.text, r.prov, null, r.conf, (r.total / 1000).toFixed(2) + " s", r.sheet].forEach((c, j) => {
+      [r.now, r.name, r.text, r.prov, r.conf, (r.total / 1000).toFixed(2) + " s", r.sheet, null].forEach((c, j) => {
         const td = document.createElement("td");
-        if (j === 4) td.append(dbDot(r.plate && r.plate.text ? r.plate.db : null)); else td.textContent = c;
-        if (j === 5 || j === 6) td.className = "num"; tr.append(td);
+        if (j === 7) { td.className = "status"; td.append(dbDot(r.plate && r.plate.text ? r.plate.db : null)); } else td.textContent = c;
+        if (j === 4 || j === 5) td.className = "num"; tr.append(td);
       });
       tb.append(tr);
     });
