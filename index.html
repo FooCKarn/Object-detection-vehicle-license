@@ -122,8 +122,6 @@ tr:last-child td { border-bottom: 0; }
 th.status { font-family: var(--font-body); font-size: 13.5px; letter-spacing: 0; text-transform: none; color: var(--cool); font-weight: 600; }
 th.status, td.status { text-align: center; }
 
-.note { color: var(--muted); font-size: 13.5px; max-width: 75ch; margin: 0; }
-.note b { color: var(--ink); font-weight: 600; }
 .stage canvas { cursor: crosshair; touch-action: none; }
 .loadbar { height: 3px; background: var(--line); }
 .loadbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
@@ -238,8 +236,6 @@ th.status, td.status { text-align: center; }
       </table>
     </div>
   </section>
-
-  <p class="note"><b>เกี่ยวกับระบบ:</b> การหาตำแหน่งป้ายใช้โมเดล YOLOv9-t ที่ฝึกมาสำหรับป้ายทะเบียนโดยเฉพาะ (open-image-models, MIT) และการอ่านตัวอักษรใช้ Tesseract OCR ภาษาไทย ทั้งสองส่วนทำงานในเบราว์เซอร์ ภาพไม่ถูกส่งออกไปที่ใด OCR จะอ่านป้ายเดียวกัน 8 รอบในขนาดต่างกัน แล้วเลือกตัวอักษรที่อ่านได้ตรงกันมากที่สุดทีละตำแหน่ง ถ้ากรอบผิดที่ ให้ลากกรอบครอบป้ายเอง</p>
 
   <footer class="site-foot">
     <p class="dept">แผนกวิชา เทคโนโลยีธุรกิจดิจิทัล</p>
