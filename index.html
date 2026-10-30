@@ -203,6 +203,7 @@ th.status, td.status { text-align: center; }
         <button class="btn ghost" id="flip" type="button" hidden>สลับกล้อง</button>
         <label class="thr" for="auto"><input id="auto" type="checkbox" style="width:auto"> อ่านเรียลไทม์</label>
         <span class="spacer"></span>
+        <button class="btn" id="saveNow" type="button" hidden>บันทึกผลนี้</button>
         <button class="btn ghost" id="camOff" type="button">ปิด</button>
       </div>
       <div class="controls" style="border-top-style:dashed">
@@ -1085,6 +1086,7 @@ th.status, td.status { text-align: center; }
   let running = false;
 
   // opts.auto: a frame from live reading, logged only as freshPlates() allows
+  let pendingLive = null;
   async function run(region, opts = {}) {
     if (!source || running) return;
     running = true;
@@ -1147,9 +1149,12 @@ th.status, td.status { text-align: center; }
     if (!opts.auto || freshPlates()) logRun(total);
     else {
       // a live reading that is not logged says why instead of "not checked"
-      results.forEach(r => { if (r.text) r.db = { state: "skip", msg: recent.has(r.text) ? "บันทึกไปแล้ว ไม่บันทึกซ้ำภายใน 30 วินาที" : "รออ่านซ้ำอีกครั้งเพื่อยืนยันก่อนบันทึก" }; });
+      results.forEach(r => { if (r.text) r.db = { state: "skip", wait: !recent.has(plateKey(r.text)), msg: recent.has(plateKey(r.text)) ? "บันทึกไปแล้ว ไม่บันทึกซ้ำจนกว่าป้ายจะหายไปเกิน 30 วินาที" : "รออ่านซ้ำอีกครั้งเพื่อยืนยันก่อนบันทึก" }; });
       paint(); renderReadout();
     }
+    // keep the last reading that is waiting, so "บันทึกผลนี้" still has it while the next frame is being read
+    if (results.some(r => r.db && r.db.wait)) { pendingLive = { list: results.filter(r => r.text), total, name: current.name }; saveNow.textContent = "บันทึก " + pendingLive.list.map(r => r.text).join(", "); saveNow.hidden = false; }
+    else if (!opts.auto || results.some(r => r.text)) { pendingLive = null; saveNow.hidden = true; }
     running = false; runBtn.disabled = false;
   }
 
@@ -1242,11 +1247,11 @@ th.status, td.status { text-align: center; }
   }
 
   const logRows = [];
-  function logRun(total) {
+  function logRun(total, list = results, name = current.name) {
     const now = new Date().toLocaleTimeString("th-TH", { hour12: false });
-    if (!results.length) logRows.unshift({ now, name: current.name, text: "ไม่พบ", prov: "—", conf: "—", total, sheet: "—" });
-    results.slice().reverse().forEach(r => {
-      const row = { now, name: current.name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
+    if (!list.length) logRows.unshift({ now, name, text: "ไม่พบ", prov: "—", conf: "—", total, sheet: "—" });
+    list.slice().reverse().forEach(r => {
+      const row = { now, name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
         provForSheet: r.prov === "อ่านจังหวัดไม่ได้" ? "" : r.prov, plate: r };
       logRows.unshift(row);
       if (!r.text) return;
@@ -1320,7 +1325,7 @@ th.status, td.status { text-align: center; }
   const video = document.getElementById("cam"), mjpeg = document.getElementById("mjpeg"), liveTag = document.getElementById("liveTag");
   const camBar = document.getElementById("camBar"), camNote = document.getElementById("camNote"), camOff = document.getElementById("camOff");
   const camOn = document.getElementById("camOn"), shot = document.getElementById("shot"), flip = document.getElementById("flip"), auto = document.getElementById("auto");
-  const urlBar = document.getElementById("urlBar"), streamUrl = document.getElementById("streamUrl");
+  const urlBar = document.getElementById("urlBar"), streamUrl = document.getElementById("streamUrl"), saveNow = document.getElementById("saveNow");
   // kind "camera": { stream, deviceId, facing, devices }; "file": { name, url }; "url" / "hls" / "mjpeg": { name, hls }
   let cam = null;
   const LIVE = {
@@ -1495,16 +1500,20 @@ th.status, td.status { text-align: center; }
   }
   // Live reading: detect plates on every frame (one model pass) and box them over the video; when a plate holds
   // still for two frames, that frame goes through the normal full read in the background.
-  // A live reading is logged once two reads in a row (within 15 s) agree on the text, so one blurred frame
-  // does not log (and notify) a wrong plate; after that the same plate is not logged again for 30 s.
+  // A live reading is logged once two reads within 30 s agree on the plate, so one blurred frame does not
+  // log (and notify) a wrong plate; after that the same plate is not logged again while it stays in view
+  // and for 30 s after it was last read (a car waiting at the gate is one entry). Plates compare
+  // without spaces and dashes: OCR writes the same red plate as "ล-9912" one time and "ล 9912" the next.
+  // A reading still waiting can be saved by hand with "บันทึกผลนี้".
   const recent = new Map(), seen = new Map();
+  const plateKey = t => t.replace(/[\s-]/g, "");
   function freshPlates() {
-    const now = Date.now(), texts = results.filter(r => r.text).map(r => r.text);
-    for (const [t, at] of recent) if (now - at > 30000) recent.delete(t);
-    for (const [t, at] of seen) if (now - at > 15000) seen.delete(t);
-    const fresh = texts.some(t => seen.has(t) && !recent.has(t));
-    texts.forEach(t => seen.set(t, now));
-    if (fresh) texts.forEach(t => recent.set(t, now));
+    const now = Date.now(), keys = results.filter(r => r.text).map(r => plateKey(r.text));
+    for (const [k, at] of recent) if (now - at > 30000) recent.delete(k);
+    for (const [k, at] of seen) if (now - at > 30000) seen.delete(k);
+    const fresh = keys.some(k => seen.has(k) && !recent.has(k));
+    keys.forEach(k => { seen.set(k, now); if (recent.has(k)) recent.set(k, now); });
+    if (fresh) keys.forEach(k => recent.set(k, now));
     return fresh;
   }
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -1584,6 +1593,14 @@ th.status, td.status { text-align: center; }
   }
   camOn.addEventListener("click", () => startCam());
   camOff.addEventListener("click", stopCam);
+  saveNow.addEventListener("click", () => {
+    if (!pendingLive) return;
+    const { list, total, name } = pendingLive, now = Date.now();
+    list.forEach(r => { r.db = null; recent.set(plateKey(r.text), now); });
+    pendingLive = null; saveNow.hidden = true;
+    logRun(total, list, name);
+    if (list.some(r => results.includes(r))) { paint(); renderReadout(); }
+  });
   flip.addEventListener("click", flipCam);
   // a manual shot freezes that frame, so live reading stops until it is ticked again
   shot.addEventListener("click", () => { if (!cam) return; auto.checked = false; if (!stage.classList.contains("live")) showLive(true); else capture(); });
