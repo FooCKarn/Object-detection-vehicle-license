@@ -132,7 +132,11 @@ th.status, td.status { text-align: center; }
 
 /* Camera: live preview sits over the canvas; a captured frame goes to the canvas like an upload */
 .stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage); }
-.controls[hidden], .stage video[hidden], .cam-note[hidden], .btn[hidden] { display: none; }
+.stage img.live-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage); }
+.controls[hidden], .stage video[hidden], .stage img[hidden], .cam-note[hidden], .btn[hidden] { display: none; }
+.stage canvas.overlay { pointer-events: none; cursor: default; }
+.stage:not(.live) canvas.overlay { display: none; }
+.url-in { flex: 1 1 260px; min-width: 0; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 .live-tag { position: absolute; top: 10px; left: 10px; font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .08em; padding: 3px 8px; border-radius: 4px; background: var(--bad); color: #fff; pointer-events: none; }
 .stage:not(.live) .live-tag { display: none; }
 .cam-note { color: var(--warn); font-size: 13px; flex-basis: 100%; }
@@ -154,7 +158,7 @@ th.status, td.status { text-align: center; }
       <div class="brand-mark" aria-hidden="true">กข</div>
       <div>
         <h1>PlateScan · อ่านป้ายทะเบียน</h1>
-        <p class="sub">อัปโหลดภาพ หรือถ่ายจากกล้อง webcam / มือถือ โมเดล YOLOv9 ที่ฝึกมาเพื่อหาป้ายทะเบียนจะตีกรอบ แล้ว OCR ภาษาไทยอ่านหมวด เลขทะเบียน และจังหวัด ทั้งหมดทำงานในเบราว์เซอร์</p>
+        <p class="sub">อัปโหลดภาพ วิดีโอ หรือถ่ายจากกล้อง webcam / มือถือ โมเดล YOLOv9 ที่ฝึกมาเพื่อหาป้ายทะเบียนจะตีกรอบ แล้ว OCR ภาษาไทยอ่านหมวด เลขทะเบียน และจังหวัด ทั้งหมดทำงานในเบราว์เซอร์</p>
       </div>
     </div>
     <span class="demo-flag" id="engineFlag">กำลังโหลด OCR…</span>
@@ -170,7 +174,9 @@ th.status, td.status { text-align: center; }
       <div class="stage" id="stage">
         <canvas id="view" width="1280" height="800"></canvas>
         <video id="cam" playsinline muted hidden></video>
-        <span class="live-tag" aria-hidden="true">● LIVE</span>
+        <img id="mjpeg" class="live-img" alt="" hidden>
+        <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+        <span class="live-tag" id="liveTag" aria-hidden="true">● LIVE</span>
         <div class="scanline"></div>
         <div class="drop-hint" id="dropHint" hidden>วางไฟล์ภาพที่นี่</div>
       </div>
@@ -178,18 +184,26 @@ th.status, td.status { text-align: center; }
         <button class="btn ghost" id="camOn" type="button">ใช้กล้อง</button>
         <label class="btn ghost phone-only" for="snap">ถ่ายด้วยแอปกล้อง</label>
         <input id="snap" type="file" accept="image/*" capture="environment" hidden>
+        <label class="btn ghost" for="vidFile">เปิดวิดีโอ</label>
+        <input id="vidFile" type="file" accept="video/*" hidden>
+        <button class="btn ghost" id="urlOn" type="button">ลิงก์สตรีม</button>
         <span class="spacer"></span>
         <label class="btn ghost" for="file">อัปโหลดภาพ</label>
         <input id="file" type="file" accept="image/*" hidden>
         <button class="btn" id="run" type="button">อ่านป้ายอีกครั้ง</button>
         <p class="cam-note" id="camNote" role="alert" hidden></p>
       </div>
+      <form class="controls" id="urlBar" hidden>
+        <input class="url-in" id="streamUrl" type="url" inputmode="url" placeholder="https://… (.mp4, .m3u8 หรือ MJPEG)" aria-label="ลิงก์วิดีโอหรือสตรีม" required>
+        <button class="btn" type="submit">เปิดลิงก์</button>
+        <button class="btn ghost" id="urlCancel" type="button">ยกเลิก</button>
+      </form>
       <div class="controls" id="camBar" hidden>
         <button class="btn" id="shot" type="button">ถ่ายภาพและอ่านป้าย</button>
         <button class="btn ghost" id="flip" type="button" hidden>สลับกล้อง</button>
-        <label class="thr" for="auto"><input id="auto" type="checkbox" style="width:auto"> ถ่ายอัตโนมัติ</label>
+        <label class="thr" for="auto"><input id="auto" type="checkbox" style="width:auto"> อ่านเรียลไทม์</label>
         <span class="spacer"></span>
-        <button class="btn ghost" id="camOff" type="button">ปิดกล้อง</button>
+        <button class="btn ghost" id="camOff" type="button">ปิด</button>
       </div>
       <div class="controls" style="border-top-style:dashed">
         <span class="hint">อ่านไม่เจอหรือกรอบผิด? ลากเมาส์ (หรือนิ้ว) ครอบป้ายบนภาพ ระบบจะอ่านเฉพาะบริเวณนั้น</span>
@@ -524,6 +538,7 @@ th.status, td.status { text-align: center; }
   // Runs one model on one region of the source, letterboxed to the model size. Two output layouts are read:
   // open-image-models rows [batch, x1, y1, x2, y2, class, score], and an Ultralytics NMS export [1, K, 6] rows
   // [x1, y1, x2, y2, score, class], so a model fine-tuned with training/finetune.py drops in as lib/lp608s.onnx.
+  let ortQueue = Promise.resolve();
   async function runDetector(m, src, [rx, ry, rw, rh], minScore) {
     const S = m.size, r = Math.min(S / rh, S / rw);
     const nw = Math.round(rw * r), nh = Math.round(rh * r), dw = (S - nw) / 2, dh = (S - nh) / 2;
@@ -533,7 +548,9 @@ th.status, td.status { text-align: center; }
     g.drawImage(src, rx, ry, rw, rh, Math.round(dw - 0.1), Math.round(dh - 0.1), nw, nh);
     const px = g.getImageData(0, 0, S, S).data, arr = new Float32Array(3 * S * S);
     for (let i = 0; i < S * S; i++) { arr[i] = px[i*4] / 255; arr[S*S + i] = px[i*4+1] / 255; arr[2*S*S + i] = px[i*4+2] / 255; }
-    const sess = m.sess, out = await sess.run({ [sess.inputNames[0]]: new ort.Tensor("float32", arr, [1, 3, S, S]) });
+    // one session run at a time: live tracking and a full read can both ask for the detector
+    const sess = m.sess, feeds = { [sess.inputNames[0]]: new ort.Tensor("float32", arr, [1, 3, S, S]) };
+    const out = await (ortQueue = ortQueue.catch(() => {}).then(() => sess.run(feeds)));
     const o = out[sess.outputNames[0]], d = o.data, boxes = [];
     const ultra = o.dims.length === 3 && o.dims[2] === 6, n = ultra ? o.dims[1] : o.dims[0], st = ultra ? 6 : 7;
     for (let i = 0; i < n; i++) {
@@ -614,6 +631,13 @@ th.status, td.status { text-align: center; }
       if (inner) { f.loose = f.box; f.box = inner.box; f.det = Math.max(f.det, inner.det); }
     }
     return fusionDedupe(fused);
+  }
+  // Live video: one pass of the tiny model per frame, fast enough to track plates on screen
+  async function detectLive(src) {
+    const area = src.width * src.height, m = detectors.find(d => d.name === "v9t") || detectors[0];
+    const boxes = (await runDetector(m, src, [0, 0, src.width, src.height], 0.3))
+      .filter(b => (b.box[2] * b.box[3] < area * 0.4 || b.det >= 0.6) && b.box[2] > 12 && b.box[3] > 8);
+    return fuseBoxes(src, boxes).slice(0, 3);
   }
   // after refining, two loose boxes can land on the same plate
   function fusionDedupe(list) {
@@ -1060,7 +1084,7 @@ th.status, td.status { text-align: center; }
   const setStep = (k, cls, ms) => { const li = pipe.find(l => l.dataset.k === k); li.className = cls; li.querySelector(".ms").textContent = ms != null ? (ms < 1000 ? ms.toFixed(0) + " ms" : (ms / 1000).toFixed(2) + " s") : ""; };
   let running = false;
 
-  // opts.auto: a frame from auto-capture, logged only when it shows a plate not logged in the last 30 s
+  // opts.auto: a frame from live reading, logged only as freshPlates() allows
   async function run(region, opts = {}) {
     if (!source || running) return;
     running = true;
@@ -1085,7 +1109,7 @@ th.status, td.status { text-align: center; }
         plates.push({ ...p, box: b.box, det: b.det });
       }
       // nothing detected: fall back to searching the whole image for plate-shaped text
-      if (!region && !plates.length) {
+      if (!region && !opts.auto && !plates.length) {
         let found = [], texts = [];
         for (const h of [...new Set([Math.min(1400, source.height), 480, 260, 150].filter(h => h <= Math.max(source.height, 150)))]) {
           const r = await readRegion(source, [0, 0, source.width, source.height], h);
@@ -1121,6 +1145,11 @@ th.status, td.status { text-align: center; }
     document.getElementById("total").textContent = "รวม " + (total / 1000).toFixed(2) + " s";
     paint(); renderReadout();
     if (!opts.auto || freshPlates()) logRun(total);
+    else {
+      // a live reading that is not logged says why instead of "not checked"
+      results.forEach(r => { if (r.text) r.db = { state: "skip", msg: recent.has(r.text) ? "บันทึกไปแล้ว ไม่บันทึกซ้ำภายใน 30 วินาที" : "รออ่านซ้ำอีกครั้งเพื่อยืนยันก่อนบันทึก" }; });
+      paint(); renderReadout();
+    }
     running = false; runBtn.disabled = false;
   }
 
@@ -1191,6 +1220,7 @@ th.status, td.status { text-align: center; }
       case "found": return "✓ พบในฐานข้อมูล";
       case "missing": return db.result === "unregistered" ? "✕ ไม่พบในฐานข้อมูล" : "✕ พบในฐานข้อมูล แต่" + RESULT_TH[db.result];
       case "wait": return "กำลังตรวจสอบฐานข้อมูล…";
+      case "skip": return db.msg;
       case "error": return "ตรวจสอบฐานข้อมูลไม่ได้" + (db.msg ? `: ${db.msg}` : "");
       default: return "ไม่ได้ตรวจสอบฐานข้อมูล (อ่านทะเบียนไม่ได้)";
     }
@@ -1286,28 +1316,64 @@ th.status, td.status { text-align: center; }
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", paint);
 
-  // ---------- Camera (webcam or phone, needs HTTPS) ----------
-  const video = document.getElementById("cam"), camBar = document.getElementById("camBar"), camNote = document.getElementById("camNote");
+  // ---------- Live sources: camera (webcam or phone, needs HTTPS), a video file, or a stream link ----------
+  const video = document.getElementById("cam"), mjpeg = document.getElementById("mjpeg"), liveTag = document.getElementById("liveTag");
+  const camBar = document.getElementById("camBar"), camNote = document.getElementById("camNote"), camOff = document.getElementById("camOff");
   const camOn = document.getElementById("camOn"), shot = document.getElementById("shot"), flip = document.getElementById("flip"), auto = document.getElementById("auto");
-  let cam = null; // { stream, deviceId, facing, devices }
+  const urlBar = document.getElementById("urlBar"), streamUrl = document.getElementById("streamUrl");
+  // kind "camera": { stream, deviceId, facing, devices }; "file": { name, url }; "url" / "hls" / "mjpeg": { name, hls }
+  let cam = null;
+  const LIVE = {
+    camera: { tag: "● LIVE", off: "ปิดกล้อง", label: () => "กล้อง · ภาพสด" },
+    file: { tag: "▶ VIDEO", off: "ปิดวิดีโอ", label: c => "วิดีโอ · " + c.name },
+    url: { tag: "● STREAM", off: "ปิดสตรีม", label: c => "สตรีม · " + c.name },
+  };
+  const liveInfo = () => LIVE[cam.kind] || LIVE.url;
   function camError(msg) { camNote.textContent = msg; camNote.hidden = !msg; }
   function camErrorText(e) {
     switch (e && e.name) {
       case "NotAllowedError": case "SecurityError":
         return "ไม่ได้รับอนุญาตให้ใช้กล้อง กดไอคอนกล้องหรือแม่กุญแจที่แถบที่อยู่ เลือก “อนุญาต” แล้วกด “ใช้กล้อง” อีกครั้ง หรือใช้ปุ่มอัปโหลดภาพแทน";
       case "NotFoundError": case "OverconstrainedError":
-        return "ไม่พบกล้องบนอุปกรณ์นี้ ใช้ปุ่มอัปโหลดภาพแทนได้";
+        return "ไม่พบกล้องบนอุปกรณ์นี้ ใช้ปุ่มเปิดวิดีโอหรืออัปโหลดภาพแทนได้";
       case "NotReadableError": case "AbortError":
         return "เปิดกล้องไม่ได้ กล้องอาจถูกใช้งานโดยแอปหรือแท็บอื่นอยู่ ปิดแล้วลองอีกครั้ง";
       default: return "เปิดกล้องไม่ได้" + (e && e.message ? `: ${e.message}` : "");
     }
   }
+  const frameEl = () => cam && cam.kind === "mjpeg" ? mjpeg : video;
   function showLive(on) {
-    video.hidden = !on; stage.classList.toggle("live", on);
+    on = on && !!cam;
+    video.hidden = !on || cam.kind === "mjpeg"; mjpeg.hidden = !on || cam.kind !== "mjpeg";
+    stage.classList.toggle("live", on);
     shot.textContent = on ? "ถ่ายภาพและอ่านป้าย" : "ถ่ายใหม่";
-    if (on) document.getElementById("srcLabel").textContent = "กล้อง · ภาพสด";
+    if (!on) return;
+    liveTag.textContent = liveInfo().tag;
+    document.getElementById("srcLabel").textContent = liveInfo().label(cam);
+    if (cam.kind === "file" && !video.ended) video.play().catch(() => {});
   }
-  function stopStream() { if (cam) cam.stream.getTracks().forEach(t => t.stop()); }
+  // release whatever is open, leaving the video and image elements empty
+  function stopStream() {
+    if (cam && cam.stream) cam.stream.getTracks().forEach(t => t.stop());
+    if (cam && cam.hls) cam.hls.destroy();
+    if (cam && cam.url) URL.revokeObjectURL(cam.url);
+    video.pause(); video.srcObject = null; video.removeAttribute("src"); video.load();
+    video.controls = false; video.loop = false; video.removeAttribute("crossorigin");
+    mjpeg.removeAttribute("src");
+  }
+  function opened(next) {
+    cam = next;
+    flip.hidden = !(cam.devices && cam.devices.length > 1);
+    camOff.textContent = liveInfo().off;
+    camOn.hidden = cam.kind === "camera"; urlBar.hidden = true; camBar.hidden = false;
+    showLive(true);
+    auto.checked = true; startRealtime();
+  }
+  function openFailed(msg) {
+    stopStream(); cam = null; auto.checked = false;
+    camBar.hidden = true; camOn.hidden = false; camOn.disabled = false; showLive(false); paint();
+    camError(msg);
+  }
   // want: { facing: "environment" | "user" } or { deviceId }
   async function startCam(want = { facing: "environment" }) {
     camError("");
@@ -1318,31 +1384,26 @@ th.status, td.status { text-align: center; }
     camOn.disabled = true;
     let stream;
     try {
-      stopStream();
+      stopStream(); cam = null;
       try { stream = await navigator.mediaDevices.getUserMedia({ video: video0, audio: false }); }
       catch (e) { if (e.name !== "OverconstrainedError") throw e; stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
-    } catch (e) {
-      cam = null; camBar.hidden = true; camOn.hidden = false; camOn.disabled = false; showLive(false); paint();
-      return camError(camErrorText(e));
-    }
+    } catch (e) { return openFailed(camErrorText(e)); }
     camOn.disabled = false;
     const set = stream.getVideoTracks()[0].getSettings();
     // device labels and the full list only show up once permission is granted
     const devices = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter(d => d.kind === "videoinput");
-    cam = { stream, deviceId: set.deviceId, facing: set.facingMode || want.facing || "", devices };
     video.srcObject = stream;
     await video.play().catch(() => {});
-    flip.hidden = devices.length < 2;
-    camOn.hidden = true; camBar.hidden = false; showLive(true);
+    opened({ kind: "camera", stream, deviceId: set.deviceId, facing: set.facingMode || want.facing || "", devices });
   }
   function stopCam() {
-    auto.checked = false; stopStream(); cam = null; video.srcObject = null;
+    auto.checked = false; stopStream(); cam = null;
     camBar.hidden = true; camOn.hidden = false; showLive(false);
     if (!source) document.getElementById("srcLabel").textContent = "ภาพต้นฉบับ";
     else if (current) document.getElementById("srcLabel").textContent = current.label;
   }
   async function flipCam() {
-    if (!cam || cam.devices.length < 2) return;
+    if (!cam || !cam.devices || cam.devices.length < 2) return;
     const before = cam.deviceId;
     // phones: front <-> back by facing; webcams (no facing, or facing did not change the device): next device in the list
     if (cam.facing) await startCam({ facing: cam.facing === "user" ? "environment" : "user" });
@@ -1352,48 +1413,188 @@ th.status, td.status { text-align: center; }
       if (next && next.deviceId !== cam.deviceId) await startCam({ deviceId: next.deviceId });
     }
   }
-  function capture(isAuto = false) {
-    if (!cam || running || !video.videoWidth) return Promise.resolve();
-    const k = Math.min(1, 2000 / Math.max(video.videoWidth, video.videoHeight));
+
+  // resolves once the element has a frame to draw, rejects on a load error or after 15 s
+  function firstFrame(el) {
+    return new Promise((ok, fail) => {
+      const done = f => { clearTimeout(t); el.removeEventListener("loadeddata", onOk); el.removeEventListener("load", onOk); el.removeEventListener("error", onErr); f(); };
+      const onOk = () => done(ok), onErr = () => done(() => fail(new Error("load")));
+      const t = setTimeout(() => done(() => fail(new Error("timeout"))), 15000);
+      el.addEventListener(el === mjpeg ? "load" : "loadeddata", onOk); el.addEventListener("error", onErr);
+    });
+  }
+  function loadScript(src) {
+    return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.append(s); });
+  }
+  async function openVideoFile(f) {
+    if (!f || running) return;
+    camError(""); stopStream(); cam = null;
+    const url = URL.createObjectURL(f);
+    video.muted = true; video.controls = true; video.src = url;
+    try { await firstFrame(video); }
+    catch { URL.revokeObjectURL(url); return openFailed("เปิดไฟล์วิดีโอนี้ไม่ได้ ลองไฟล์ MP4 (H.264) หรือ WebM"); }
+    opened({ kind: "file", name: f.name || "วิดีโอ", url });
+  }
+  // a stream link: HLS (.m3u8) through hls.js where the browser has no native HLS, any other video the
+  // browser can play, else an image that keeps refreshing (MJPEG). Frames are read back from a canvas,
+  // so the server must send CORS headers.
+  async function openUrl(raw) {
+    camError("");
+    let u;
+    try { u = new URL(raw.trim()); } catch { return camError("ลิงก์ไม่ถูกต้อง ต้องขึ้นต้นด้วย https://"); }
+    if (/^rtsps?:$/.test(u.protocol))
+      return camError("เบราว์เซอร์เปิด RTSP โดยตรงไม่ได้ ต้องแปลงเป็น HLS (.m3u8) หรือ MJPEG ก่อน เช่นด้วย go2rtc หรือ MediaMTX แล้วใส่ลิงก์ https:// ที่ได้");
+    if (u.protocol === "http:" && location.protocol === "https:")
+      return camError("เว็บนี้เป็น HTTPS เบราว์เซอร์จะบล็อกลิงก์ http:// ต้องใช้ลิงก์ https:// เท่านั้น");
+    if (!/^https?:$/.test(u.protocol)) return camError("รองรับเฉพาะลิงก์ https://");
+    if (running) return;
+    stopStream(); cam = null;
+    const name = u.host + (u.pathname.length > 1 ? u.pathname.replace(/^.*\//, "/") : "");
+    video.muted = true; video.crossOrigin = "anonymous";
+    if (/\.m3u8$/i.test(u.pathname) && !video.canPlayType("application/vnd.apple.mpegurl")) {
+      try { if (!window.Hls) await loadScript(libBase + "hls.min.js"); } catch { return openFailed("โหลดตัวเล่น HLS ไม่ได้"); }
+      if (!window.Hls.isSupported()) return openFailed("เบราว์เซอร์นี้เล่น HLS ไม่ได้");
+      const hls = new window.Hls();
+      const ready = firstFrame(video);
+      const fatal = new Promise((_, fail) => hls.on(window.Hls.Events.ERROR, (_e, d) => { if (d.fatal) fail(new Error(d.details)); }));
+      hls.loadSource(u.href); hls.attachMedia(video); video.play().catch(() => {});
+      cam = { kind: "hls", hls }; // so a failure below destroys it
+      try { await Promise.race([ready, fatal]); }
+      catch { return openFailed("เปิดสตรีม HLS นี้ไม่ได้ ตรวจว่าลิงก์ถูกต้องและเซิร์ฟเวอร์อนุญาต CORS"); }
+      return opened({ kind: "hls", name, hls });
+    }
+    video.src = u.href; video.play().catch(() => {});
+    try { await firstFrame(video); return opened({ kind: "url", name }); } catch {}
+    stopStream();
+    mjpeg.crossOrigin = "anonymous"; mjpeg.src = u.href;
+    try { await firstFrame(mjpeg); return opened({ kind: "mjpeg", name }); }
+    catch { openFailed("เปิดลิงก์นี้ไม่ได้ ต้องเป็นวิดีโอ (MP4/WebM), สตรีม HLS (.m3u8) หรือ MJPEG และเซิร์ฟเวอร์ต้องอนุญาต CORS"); }
+  }
+
+  function capture() {
+    const el = frameEl();
+    const fw = el.videoWidth || el.naturalWidth, fh = el.videoHeight || el.naturalHeight;
+    if (!cam || running || !fw) return Promise.resolve();
+    const k = Math.min(1, 2000 / Math.max(fw, fh));
     const c = document.createElement("canvas");
-    c.width = Math.round(video.videoWidth * k); c.height = Math.round(video.videoHeight * k);
-    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    c.width = Math.round(fw * k); c.height = Math.round(fh * k);
+    try { c.getContext("2d").drawImage(el, 0, 0, c.width, c.height); c.getContext("2d").getImageData(0, 0, 1, 1); }
+    catch { auto.checked = false; camError("อ่านภาพจากลิงก์นี้ไม่ได้ เพราะเซิร์ฟเวอร์ไม่อนุญาต CORS"); return Promise.resolve(); }
+    // a captured frame from a file stays on screen while it is read
+    if (cam.kind === "file") video.pause();
     source = c;
     const at = new Date().toLocaleTimeString("th-TH", { hour12: false });
-    current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    if (cam.kind === "camera") current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    else if (cam.kind === "file") {
+      const t = Math.floor(video.currentTime), pos = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+      current = { name: `${cam.name} @${pos}`, label: `วิดีโอ · ${cam.name} · ${pos}` };
+    } else current = { name: "สตรีม " + at, label: `สตรีม · ${cam.name} · ${at}` };
     document.getElementById("srcLabel").textContent = current.label;
     showLive(false);
-    return run(null, { auto: isAuto });
+    return run();
   }
-  // auto-capture: show the result briefly, go back to the live view, grab the next frame
-  const recent = new Map();
+  // Live reading: detect plates on every frame (one model pass) and box them over the video; when a plate holds
+  // still for two frames, that frame goes through the normal full read in the background.
+  // A live reading is logged once two reads in a row (within 15 s) agree on the text, so one blurred frame
+  // does not log (and notify) a wrong plate; after that the same plate is not logged again for 30 s.
+  const recent = new Map(), seen = new Map();
   function freshPlates() {
     const now = Date.now(), texts = results.filter(r => r.text).map(r => r.text);
     for (const [t, at] of recent) if (now - at > 30000) recent.delete(t);
-    const fresh = texts.some(t => !recent.has(t));
-    texts.forEach(t => recent.set(t, now));
+    for (const [t, at] of seen) if (now - at > 15000) seen.delete(t);
+    const fresh = texts.some(t => seen.has(t) && !recent.has(t));
+    texts.forEach(t => seen.set(t, now));
+    if (fresh) texts.forEach(t => recent.set(t, now));
     return fresh;
   }
   const wait = ms => new Promise(r => setTimeout(r, ms));
-  let autoLoop = null;
-  function startAuto() {
-    if (autoLoop) return;
-    autoLoop = (async () => {
+  const overlay = document.getElementById("overlay"), octx = overlay.getContext("2d");
+  let liveBoxes = [], liveReads = [], liveScale = 1, liveLoop = null;
+  function grabFrame() {
+    const el = frameEl(), fw = el.videoWidth || el.naturalWidth, fh = el.videoHeight || el.naturalHeight;
+    if (!fw) return null;
+    const k = Math.min(1, 2000 / Math.max(fw, fh)), c = document.createElement("canvas");
+    c.width = Math.round(fw * k); c.height = Math.round(fh * k);
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(el, 0, 0, c.width, c.height);
+    g.getImageData(0, 0, 1, 1); // throws on a frame from a server without CORS
+    return c;
+  }
+  function drawOverlay(fw, fh) {
+    const r = overlay.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    overlay.width = Math.round(r.width * dpr); overlay.height = Math.round(r.height * dpr);
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!liveBoxes.length || !fw) return;
+    const s = Math.min(overlay.width / fw, overlay.height / fh), ox = (overlay.width - fw * s) / 2, oy = (overlay.height - fh * s) / 2;
+    const accent = css("--accent") || "#e8a400", now = Date.now();
+    liveBoxes.forEach(b => {
+      const [bx, by, bw, bh] = b.box, x = ox + bx * s, y = oy + by * s, w = bw * s, h = bh * s;
+      // a reading from the last few seconds that sits where this box is gives it its text and database colour
+      const hit = liveReads.find(r => now - r.at < 6000 && overlap(r.box, b.box) > 0.3);
+      const color = hit && hit.plate.db && hit.plate.db.state === "found" ? css("--ok") : hit && hit.plate.db && hit.plate.db.state === "missing" ? css("--bad") : accent;
+      octx.save(); octx.strokeStyle = color; octx.lineWidth = 3 * dpr; octx.strokeRect(x - 4 * dpr, y - 4 * dpr, w + 8 * dpr, h + 8 * dpr);
+      const label = hit ? `${hit.plate.text}${hit.plate.prov && hit.plate.prov !== "อ่านจังหวัดไม่ได้" ? " · " + hit.plate.prov : ""}` : `ป้าย ${b.det.toFixed(2)}`;
+      octx.font = `600 ${15 * dpr}px "IBM Plex Sans Thai", "JetBrains Mono", sans-serif`;
+      const tw = octx.measureText(label).width + 12 * dpr, th = 24 * dpr;
+      let ly = y - 4 * dpr - th; if (ly < 0) ly = y + h + 6 * dpr;
+      const lx = Math.min(Math.max(0, x - 4 * dpr), overlay.width - tw);
+      octx.fillStyle = color; octx.fillRect(lx, ly, tw, th);
+      octx.fillStyle = color === accent ? "#1a1400" : "#fff"; octx.textBaseline = "middle"; octx.fillText(label, lx + 6 * dpr, ly + th / 2 + dpr);
+      octx.restore();
+    });
+  }
+  function startRealtime() {
+    if (liveLoop) return;
+    liveLoop = (async () => {
+      await allReady;
+      let prev = [], lastRead = 0;
       while (auto.checked && cam) {
-        showLive(true); await wait(1200);
+        if (!stage.classList.contains("live")) showLive(true);
+        let frame;
+        try { frame = grabFrame(); } catch { auto.checked = false; camError("อ่านภาพจากลิงก์นี้ไม่ได้ เพราะเซิร์ฟเวอร์ไม่อนุญาต CORS"); break; }
+        if (!frame || !detectors.length || (cam.kind !== "mjpeg" && video.paused)) { liveBoxes = []; drawOverlay(); await wait(250); continue; }
+        let boxes = [];
+        try { boxes = await detectLive(frame); } catch (e) { console.error(e); }
         if (!auto.checked || !cam) break;
-        if (!running) { await capture(true); await wait(1500); }
+        liveBoxes = boxes; drawOverlay(frame.width, frame.height);
+        const steady = boxes.filter(b => b.det >= 0.5 && prev.some(p => overlap(p.box, b.box, "union") > 0.5));
+        prev = boxes;
+        if (steady.length && !running && Date.now() - lastRead > 800) {
+          // the full read (both models, zoom, OCR) runs alongside; OCR is in a worker, so tracking keeps going
+          lastRead = Date.now();
+          readLiveFrame(frame).finally(() => { lastRead = Date.now(); });
+        }
+        // while a full read runs, track slowly so the read gets the CPU
+        await wait(running ? 700 : 30);
       }
-      autoLoop = null;
+      liveBoxes = []; drawOverlay();
+      liveLoop = null;
     })();
   }
+  async function readLiveFrame(frame) {
+    source = frame;
+    const at = new Date().toLocaleTimeString("th-TH", { hour12: false });
+    if (cam.kind === "camera") current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    else if (cam.kind === "file") {
+      const t = Math.floor(video.currentTime);
+      current = { name: `${cam.name} @${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`, label: "วิดีโอ · " + cam.name };
+    } else current = { name: "สตรีม " + at, label: `สตรีม · ${cam.name}` };
+    await run(null, { auto: true });
+    liveReads = results.filter(r => r.text).map(plate => ({ box: plate.box, plate, at: Date.now() }));
+  }
   camOn.addEventListener("click", () => startCam());
-  document.getElementById("camOff").addEventListener("click", stopCam);
+  camOff.addEventListener("click", stopCam);
   flip.addEventListener("click", flipCam);
-  shot.addEventListener("click", () => { if (!cam) return; if (video.hidden) { auto.checked = false; showLive(true); } else capture(); });
-  auto.addEventListener("change", () => { if (auto.checked) startAuto(); });
+  // a manual shot freezes that frame, so live reading stops until it is ticked again
+  shot.addEventListener("click", () => { if (!cam) return; auto.checked = false; if (!stage.classList.contains("live")) showLive(true); else capture(); });
+  auto.addEventListener("change", () => { if (auto.checked) { camError(""); if (cam && cam.kind === "file" && video.ended) video.currentTime = 0; startRealtime(); } });
+  video.addEventListener("ended", () => { if (cam && cam.kind === "file" && auto.checked) { auto.checked = false; camError("วิดีโอจบแล้ว การอ่านเรียลไทม์หยุดแล้ว"); } });
+  document.getElementById("vidFile").addEventListener("change", e => { openVideoFile(e.target.files[0]); e.target.value = ""; });
+  document.getElementById("urlOn").addEventListener("click", () => { urlBar.hidden = !urlBar.hidden; if (!urlBar.hidden) streamUrl.focus(); });
+  document.getElementById("urlCancel").addEventListener("click", () => { urlBar.hidden = true; });
+  urlBar.addEventListener("submit", e => { e.preventDefault(); openUrl(streamUrl.value); });
   // phones pause the camera in the background; release it so it is not left half-open
-  document.addEventListener("visibilitychange", () => { if (document.hidden && cam) stopCam(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && cam && cam.kind === "camera") stopCam(); });
 
   // for testing from the console or an automated harness
   window.PlateScan = { detectPlates, readAny, readPlate, readMoto, readRow, motoRows, prep, matchProvince, get source() { return source; } };
@@ -1401,7 +1602,7 @@ th.status, td.status { text-align: center; }
   const start = () => paint();
   (document.fonts?.ready || Promise.resolve()).then(start, start);
   allReady.then(() => {
-    if (!source) document.getElementById("readout").innerHTML = '<p class="empty">อัปโหลดภาพรถหรือป้ายทะเบียน กด “ใช้กล้อง” เพื่อถ่ายจาก webcam หรือกล้องมือถือ ลากไฟล์มาวางบนภาพ หรือวางภาพจากคลิปบอร์ด (Ctrl+V) เพื่อเริ่มอ่าน</p>';
+    if (!source) document.getElementById("readout").innerHTML = '<p class="empty">อัปโหลดภาพรถหรือป้ายทะเบียน กด “ใช้กล้อง” เพื่อถ่ายจาก webcam หรือกล้องมือถือ “เปิดวิดีโอ” เพื่ออ่านจากไฟล์วิดีโอ ลากไฟล์มาวางบนภาพ หรือวางภาพจากคลิปบอร์ด (Ctrl+V) เพื่อเริ่มอ่าน</p>';
   });
 })();
 </script>
