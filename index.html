@@ -180,6 +180,7 @@ th.status, td.status { text-align: center; }
       </div>
       <div class="controls">
         <button class="btn ghost" id="camOn" type="button">ใช้กล้อง</button>
+        <button class="btn ghost" id="screenOn" type="button" title="แชร์แท็บหรือหน้าต่างที่เปิดภาพกล้องวงจรปิดอยู่ แล้วอ่านป้ายจากภาพนั้น">แชร์หน้าจอ</button>
         <label class="btn ghost phone-only" for="snap">ถ่ายด้วยแอปกล้อง</label>
         <input id="snap" type="file" accept="image/*" capture="environment" hidden>
         <label class="btn ghost" for="vidFile">เปิดวิดีโอ</label>
@@ -1326,6 +1327,7 @@ th.status, td.status { text-align: center; }
   let cam = null;
   const LIVE = {
     camera: { tag: "● LIVE", off: "ปิดกล้อง", label: () => "กล้อง · ภาพสด" },
+    screen: { tag: "● SCREEN", off: "หยุดแชร์", label: c => "แชร์หน้าจอ · " + c.name },
     file: { tag: "▶ VIDEO", off: "ปิดวิดีโอ", label: c => "วิดีโอ · " + c.name },
     url: { tag: "● STREAM", off: "ปิดสตรีม", label: c => "สตรีม · " + c.name },
   };
@@ -1486,6 +1488,7 @@ th.status, td.status { text-align: center; }
     source = c;
     const at = new Date().toLocaleTimeString("th-TH", { hour12: false });
     if (cam.kind === "camera") current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    else if (cam.kind === "screen") current = { name: "หน้าจอ " + at, label: "แชร์หน้าจอ · " + at };
     else if (cam.kind === "file") {
       const t = Math.floor(video.currentTime), pos = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
       current = { name: `${cam.name} @${pos}`, label: `วิดีโอ · ${cam.name} · ${pos}` };
@@ -1580,6 +1583,7 @@ th.status, td.status { text-align: center; }
     source = frame;
     const at = new Date().toLocaleTimeString("th-TH", { hour12: false });
     if (cam.kind === "camera") current = { name: "กล้อง " + at, label: "ภาพจากกล้อง · " + at };
+    else if (cam.kind === "screen") current = { name: "หน้าจอ " + at, label: "แชร์หน้าจอ · " + at };
     else if (cam.kind === "file") {
       const t = Math.floor(video.currentTime);
       current = { name: `${cam.name} @${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`, label: "วิดีโอ · " + cam.name };
@@ -1588,6 +1592,27 @@ th.status, td.status { text-align: center; }
     liveReads = results.filter(r => r.text).map(plate => ({ box: plate.box, plate, at: Date.now() }));
   }
   camOn.addEventListener("click", () => startCam());
+  // Screen share: any picture the browser can show (a CCTV Live View tab, an NVR app, a viewer window) becomes a
+  // live source, with no relay, CORS or certificate in the way. Desktop browsers only.
+  const screenOn = document.getElementById("screenOn");
+  screenOn.hidden = !navigator.mediaDevices?.getDisplayMedia;
+  async function startScreen() {
+    camError("");
+    let stream;
+    try { stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 10, max: 15 } }, audio: false }); }
+    catch (e) {
+      if (e.name === "NotAllowedError" || e.name === "AbortError") return camError("ยกเลิกการแชร์หน้าจอแล้ว กดอีกครั้งแล้วเลือกแท็บหรือหน้าต่างที่เปิดภาพกล้องวงจรปิดอยู่");
+      return camError("แชร์หน้าจอไม่ได้" + (e.message ? `: ${e.message}` : ""));
+    }
+    stopStream(); cam = null;
+    const track = stream.getVideoTracks()[0];
+    // the browser's own "Stop sharing" bar ends the track
+    track.addEventListener("ended", () => { if (cam && cam.stream === stream) stopCam(); });
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    opened({ kind: "screen", stream, name: "ภาพสด" });
+  }
+  screenOn.addEventListener("click", startScreen);
   camOff.addEventListener("click", stopCam);
   saveNow.addEventListener("click", () => {
     if (!pendingLive) return;
