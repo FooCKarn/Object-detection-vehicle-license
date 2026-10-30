@@ -192,7 +192,7 @@ th.status, td.status { text-align: center; }
         <p class="cam-note" id="camNote" role="alert" hidden></p>
       </div>
       <form class="controls" id="urlBar" hidden>
-        <input class="url-in" id="streamUrl" type="url" inputmode="url" placeholder="https://… (.mp4, .m3u8 หรือ MJPEG)" aria-label="ลิงก์วิดีโอหรือสตรีม" required>
+        <input class="url-in" id="streamUrl" type="url" inputmode="url" placeholder="ลิงก์กล้องหรือสตรีม: https://, http://, rtsp://" aria-label="ลิงก์วิดีโอหรือสตรีม" required>
         <button class="btn" type="submit">เปิดลิงก์</button>
         <button class="btn ghost" id="urlCancel" type="button">ยกเลิก</button>
       </form>
@@ -1439,18 +1439,26 @@ th.status, td.status { text-align: center; }
   // a stream link: HLS (.m3u8) through hls.js where the browser has no native HLS, any other video the
   // browser can play, else an image that keeps refreshing (MJPEG). Frames are read back from a canvas,
   // so the server must send CORS headers.
+  // When the page is served by tools/cctv-relay.js, http:// and rtsp:// camera links go through the
+  // relay's /cam instead: same origin, so neither mixed content nor CORS gets in the way.
+  const relay = fetch("relay/info").then(r => r.ok ? r.json() : null).then(d => d && d.ok ? d : null).catch(() => null);
+  const RELAY_HELP = "ต้องรันตัวกลาง tools/cctv-relay.js บนคอมที่อยู่วงแลนเดียวกับกล้อง แล้วเปิดหน้านี้ที่ http://localhost:8080 (ดูวิธีใน docs/CCTV.md)";
   async function openUrl(raw) {
     camError("");
     let u;
-    try { u = new URL(raw.trim()); } catch { return camError("ลิงก์ไม่ถูกต้อง ต้องขึ้นต้นด้วย https://"); }
-    if (/^rtsps?:$/.test(u.protocol))
-      return camError("เบราว์เซอร์เปิด RTSP โดยตรงไม่ได้ ต้องแปลงเป็น HLS (.m3u8) หรือ MJPEG ก่อน เช่นด้วย go2rtc หรือ MediaMTX แล้วใส่ลิงก์ https:// ที่ได้");
-    if (u.protocol === "http:" && location.protocol === "https:")
-      return camError("เว็บนี้เป็น HTTPS เบราว์เซอร์จะบล็อกลิงก์ http:// ต้องใช้ลิงก์ https:// เท่านั้น");
-    if (!/^https?:$/.test(u.protocol)) return camError("รองรับเฉพาะลิงก์ https://");
+    try { u = new URL(raw.trim()); } catch { return camError("ลิงก์ไม่ถูกต้อง ต้องขึ้นต้นด้วย http://, https:// หรือ rtsp://"); }
+    if (!/^(https?|rtsps?):$/.test(u.protocol)) return camError("รองรับลิงก์ http://, https:// และ rtsp://");
+    const name = u.host + (u.pathname.length > 1 ? u.pathname.replace(/^.*\//, "/") : "");
+    const r = await relay;
+    if (r && u.protocol !== "https:") {
+      if (u.protocol.startsWith("rtsp") && !r.ffmpeg) return camError("เปิด rtsp:// ต้องติดตั้ง ffmpeg บนคอมที่รันตัวกลางก่อน แล้วเริ่มตัวกลางใหม่ (ดู docs/CCTV.md)");
+      u = new URL("cam?src=" + encodeURIComponent(u.href), location.href);
+    } else if (/^rtsps?:$/.test(u.protocol))
+      return camError("เบราว์เซอร์เปิด rtsp:// โดยตรงไม่ได้ " + RELAY_HELP);
+    else if (u.protocol === "http:" && location.protocol === "https:")
+      return camError("เว็บนี้เป็น HTTPS เบราว์เซอร์จะบล็อกลิงก์ http:// ของกล้อง " + RELAY_HELP);
     if (running) return;
     stopStream(); cam = null;
-    const name = u.host + (u.pathname.length > 1 ? u.pathname.replace(/^.*\//, "/") : "");
     video.muted = true; video.crossOrigin = "anonymous";
     if (/\.m3u8$/i.test(u.pathname) && !video.canPlayType("application/vnd.apple.mpegurl")) {
       try { if (!window.Hls) await loadScript(libBase + "hls.min.js"); } catch { return openFailed("โหลดตัวเล่น HLS ไม่ได้"); }
@@ -1464,12 +1472,19 @@ th.status, td.status { text-align: center; }
       catch { return openFailed("เปิดสตรีม HLS นี้ไม่ได้ ตรวจว่าลิงก์ถูกต้องและเซิร์ฟเวอร์อนุญาต CORS"); }
       return opened({ kind: "hls", name, hls });
     }
-    video.src = u.href; video.play().catch(() => {});
-    try { await firstFrame(video); return opened({ kind: "url", name }); } catch {}
-    stopStream();
+    // the relay hands cameras over as MJPEG, so only try a <video> for what is plainly a video file
+    if (!u.pathname.endsWith("/cam") || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(raw)) {
+      video.src = u.href; video.play().catch(() => {});
+      try { await firstFrame(video); return opened({ kind: "url", name }); } catch {}
+      stopStream();
+    }
     mjpeg.crossOrigin = "anonymous"; mjpeg.src = u.href;
     try { await firstFrame(mjpeg); return opened({ kind: "mjpeg", name }); }
-    catch { openFailed("เปิดลิงก์นี้ไม่ได้ ต้องเป็นวิดีโอ (MP4/WebM), สตรีม HLS (.m3u8) หรือ MJPEG และเซิร์ฟเวอร์ต้องอนุญาต CORS"); }
+    catch {
+      // through the relay, its own message says what went wrong with the camera
+      const why = u.pathname.endsWith("/cam") ? await fetch(u.href).then(r => r.ok ? (r.body && r.body.cancel(), "") : r.text()).catch(() => "") : "";
+      openFailed(why ? "เปิดกล้องไม่ได้: " + why.slice(0, 200) : "เปิดลิงก์นี้ไม่ได้ ต้องเป็นวิดีโอ (MP4/WebM), สตรีม HLS (.m3u8) หรือ MJPEG และเซิร์ฟเวอร์ต้องอนุญาต CORS");
+    }
   }
 
   function capture() {
