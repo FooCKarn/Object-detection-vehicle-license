@@ -36,5 +36,5 @@ module.exports = async (req, res) => {
     const outdated = data.error === "license is required";
     return res.status(502).json({ ok: false, error: outdated ? "Apps Script needs a new deployment (lookup action)" : data.error || "Apps Script error" });
   }
-  return res.status(200).json({ ok: true, result: data.result });
+  return res.status(200).json({ ok: true, result: data.result, student: data.student || null });
 };

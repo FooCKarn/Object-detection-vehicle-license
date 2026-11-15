@@ -68,5 +68,5 @@ module.exports = async (req, res) => {
 
   let notified = 0;
   try { notified = await notify(data, license, province, gate); } catch { /* logging already succeeded */ }
-  return res.status(200).json({ ok: true, id: data.id, time: data.time, result: data.result, notified });
+  return res.status(200).json({ ok: true, id: data.id, time: data.time, result: data.result, student: data.student || null, notified });
 };

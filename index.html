@@ -122,6 +122,10 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 8px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
 td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+td.dim { color: var(--muted); }
+.log-wrap th, .log-wrap td { padding: 8px 10px; }
+.log-wrap th:first-child, .log-wrap td:first-child { padding-left: 16px; }
+.log-wrap th:last-child, .log-wrap td:last-child { padding-right: 16px; }
 tr:last-child td { border-bottom: 0; }
 .dbdot { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); opacity: .45; vertical-align: middle; }
 .dbdot.found { background: var(--ok); opacity: 1; } .dbdot.missing { background: var(--bad); opacity: 1; }
@@ -251,8 +255,8 @@ th.status, td.status { text-align: center; }
       <label class="thr" for="sheetOn"><input id="sheetOn" type="checkbox" style="width:auto" disabled> <span id="sheetLabel">บันทึกลง Google Sheet</span></label></div>
     <div class="log-wrap">
       <table>
-        <thead><tr><th>เวลา</th><th>ภาพ</th><th>ทะเบียน</th><th>จังหวัด</th><th>ความมั่นใจ</th><th>ใช้เวลา</th><th>Google Sheet</th><th class="status">สถานะ (Status)</th></tr></thead>
-        <tbody id="log"><tr><td colspan="8" class="empty">ยังไม่มีรายการ</td></tr></tbody>
+        <thead><tr><th>เวลา</th><th>ทะเบียน</th><th>จังหวัด</th><th>รหัสนักเรียน</th><th>ชื่อ</th><th>ห้องเรียน</th><th>ครูที่ปรึกษา</th><th>Google Sheet</th><th class="status">สถานะ (Status)</th></tr></thead>
+        <tbody id="log"><tr><td colspan="9" class="empty">ยังไม่มีรายการ</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -1219,10 +1223,13 @@ th.status, td.status { text-align: center; }
     try {
       const r = await fetch("api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: row.text, province: row.provForSheet }) });
       const d = await r.json().catch(() => ({}));
-      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id} · ${RESULT_TH[d.result] || d.result || "—"}${d.notified ? ` · แจ้ง LINE ${d.notified} คน` : ""}` : "บันทึกไม่สำเร็จ" + (d.error ? `: ${d.error}` : "");
+      // short text in the table; the full reply (result, LINE messages) in the tooltip
+      row.sheet = r.ok && d.ok ? `บันทึกแล้ว · ID ${d.id}${d.notified ? ` · แจ้ง LINE ${d.notified}` : ""}` : "บันทึกไม่สำเร็จ";
+      row.sheetTitle = r.ok && d.ok ? `${RESULT_TH[d.result] || d.result || "—"}${d.notified ? ` · แจ้ง LINE ${d.notified} คน` : ""}` : d.error || "HTTP " + r.status;
+      if (r.ok && d.ok) plate.student = d.student || null;
       setDb(plate, r.ok && d.ok ? dbFromResult(d.result) : { state: "error", msg: d.error || "HTTP " + r.status });
     } catch {
-      row.sheet = "บันทึกไม่สำเร็จ: ต่อเครือข่ายไม่ได้";
+      row.sheet = "บันทึกไม่สำเร็จ"; row.sheetTitle = "ต่อเครือข่ายไม่ได้";
       setDb(plate, { state: "error", msg: "ต่อเครือข่ายไม่ได้" });
     }
     drawLog();
@@ -1248,6 +1255,7 @@ th.status, td.status { text-align: center; }
   }
   function setDb(plate, db) {
     plate.db = db;
+    if (db && db.state === "wait") plate.student = undefined;
     if (results.includes(plate)) { paint(); renderReadout(); }
     if (logRows.some(r => r.plate === plate)) drawLog();
   }
@@ -1256,7 +1264,7 @@ th.status, td.status { text-align: center; }
     try {
       const r = await fetch("api/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license: plate.text, province }) });
       const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) return setDb(plate, dbFromResult(d.result));
+      if (r.ok && d.ok) { plate.student = d.student || null; return setDb(plate, dbFromResult(d.result)); }
       const msg = r.status === 404 ? "ใช้ได้เฉพาะบนเว็บ Vercel" : r.status === 503 ? "ยังไม่ได้ตั้งค่า Apps Script" : d.error || "HTTP " + r.status;
       setDb(plate, { state: "error", msg });
     } catch { setDb(plate, { state: "error", msg: "ต่อเครือข่ายไม่ได้" }); }
@@ -1265,7 +1273,7 @@ th.status, td.status { text-align: center; }
   const logRows = [];
   function logRun(total, list = results, name = current.name) {
     const now = new Date().toLocaleTimeString("th-TH", { hour12: false });
-    if (!list.length) logRows.unshift({ now, name, text: "ไม่พบ", prov: "—", conf: "—", total, sheet: "—" });
+    if (!list.length) logRows.unshift({ now, name, text: "ไม่พบป้าย", prov: "—", conf: "—", total, sheet: "—" });
     list.slice().reverse().forEach(r => {
       const row = { now, name, text: r.text || "อ่านไม่ได้", prov: r.prov, conf: r.conf.toFixed(2), total, sheet: "—",
         provForSheet: r.prov === "อ่านจังหวัดไม่ได้" ? "" : r.prov, plate: r };
@@ -1285,15 +1293,34 @@ th.status, td.status { text-align: center; }
     d.title = dbLabel(db); d.setAttribute("role", "img"); d.setAttribute("aria-label", d.title);
     return d;
   }
+  // Student columns come from the Student + GroupCode sheets through the lookup / log reply:
+  // [รหัสนักเรียน, ชื่อ, ห้องเรียน, ครูที่ปรึกษา] as [text, tooltip, dim?]
+  function studentCells(plate) {
+    const dash = ["—", "", true];
+    if (!plate || !plate.text || !plate.db) return [dash, dash, dash, dash];
+    if (plate.db.state === "wait") return [["…", "กำลังค้นหาข้อมูลนักเรียน", true], dash, dash, dash];
+    const s = plate.student;
+    if (!s) {
+      const why = plate.db.state === "missing" && plate.db.result === "unregistered" ? "ไม่ได้ลงทะเบียนรถ"
+        : plate.db.state === "error" ? "ตรวจสอบไม่ได้" : plate.db.state === "skip" ? "" : "ไม่มีข้อมูล";
+      return [[why || "—", "", true], dash, dash, dash];
+    }
+    if (!s.found) return [[s.id, "", false], ["ไม่พบใน Data Student", "รหัสนี้ไม่มีในชีต Student", true], dash, dash];
+    return [[s.id, s.group ? "กลุ่มเรียน " + s.group : "", false], [s.name || "—", "", !s.name],
+      [s.room || "—", s.groupName || "", !s.room], [s.advisor || "—", "", !s.advisor]];
+  }
   function drawLog() {
     const tb = document.getElementById("log"); tb.innerHTML = "";
+    if (!logRows.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">ยังไม่มีรายการ</td></tr>'; return; }
     logRows.slice(0, 12).forEach(r => {
-      const tr = document.createElement("tr");
-      [r.now, r.name, r.text, r.prov, r.conf, (r.total / 1000).toFixed(2) + " s", r.sheet, null].forEach((c, j) => {
-        const td = document.createElement("td");
-        if (j === 7) { td.className = "status"; td.append(dbDot(r.plate && r.plate.text ? r.plate.db : null)); } else td.textContent = c;
-        if (j === 4 || j === 5) td.className = "num"; tr.append(td);
-      });
+      const tr = document.createElement("tr"), cell = (text, cls, title) => {
+        const td = document.createElement("td"); td.textContent = text;
+        if (cls) td.className = cls; if (title) td.title = title; tr.append(td); return td;
+      };
+      cell(r.now, "num"); cell(r.text); cell(r.prov);
+      studentCells(r.plate).forEach(([text, title, dim], j) => cell(text, (j === 0 && !dim ? "num" : "") + (dim ? " dim" : ""), title));
+      cell(r.sheet, r.sheet === "—" ? "dim" : "", r.sheetTitle);
+      cell("", "status").append(dbDot(r.plate && r.plate.text ? r.plate.db : null));
       tb.append(tr);
     });
   }

@@ -1,9 +1,13 @@
 // Google Apps Script for the LICENSE LOG workbook.
 //
-// "LOG" sheet:               RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT
+// "LOG" sheet:               RECORD_ID | DATE_TIME | LICENSE | PROVINCE | RESULT | STUDENT_ID
 // "REGISTER_VEHICLE" sheet:  plate_number | province | student_id | status | expired_date
 //   status: active | blocked   (anything else counts as not allowed)
 //   province may be left empty to match any province; expired_date may be left empty for no expiry.
+// "Student" sheet (also read as "Data Student"): every student in the college. Columns are found
+//   by header: student_id, GroupCode, กลุ่มเรียน, student_name.
+// "GroupCode" sheet: one row per study group. Columns found by header: รหัสกลุ่มเรียน,
+//   ชื่อกลุ่มเรียน, ชื่อย่อกลุ่มเรียน, ครูที่ปรึกษา. A student's GroupCode points at รหัสกลุ่มเรียน.
 // "STUDENT_GUARDIAN" sheet:  student_id | student_name | bind_code | line_user_id | consent
 //   One row per guardian. Staff fill student_id, student_name and bind_code (run generateBindCodes()
 //   to fill empty codes; keep the bind_code column formatted as Plain text). The script fills
@@ -19,6 +23,8 @@
 const SHEET_NAME = "LOG";
 const VEHICLES_SHEET = "REGISTER_VEHICLE";
 const GUARDIAN_SHEET = "STUDENT_GUARDIAN";
+const STUDENT_SHEETS = ["Data Student", "Student"];
+const GROUP_SHEET = "GroupCode";
 const SECURITY_ID = "SECURITY";
 const TIME_ZONE = "Asia/Bangkok";
 const CACHE_SECONDS = 60;
@@ -64,8 +70,9 @@ function logReading_(body) {
   const sheet = ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
   const id = Math.max(1, sheet.getLastRow()); // row 1 is the header, so the first record gets ID 1
   const time = Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm:ss");
-  sheet.appendRow([id, time, license, province, checked.result]);
-  return { ok: true, id: id, time: time, result: checked.result, notify: notify_(checked, license) };
+  sheet.appendRow([id, time, license, province, checked.result, checked.ownerId]);
+  return { ok: true, id: id, time: time, result: checked.result, student: student_(checked.ownerId),
+    notify: notify_(checked, license) };
 }
 
 // Registration check only, for the page's green / red badge: nothing is logged and nobody is notified.
@@ -73,7 +80,8 @@ function logReading_(body) {
 function lookup_(body) {
   const plate = clean_(body.plate, 20);
   if (!plate) return { ok: false, error: "plate is required" };
-  return { ok: true, result: check_(plate, clean_(body.province, 40)).result };
+  const checked = check_(plate, clean_(body.province, 40));
+  return { ok: true, result: checked.result, student: student_(checked.ownerId) };
 }
 
 // Who should hear about this reading. LINE user ids go back to the Vercel function, which holds
@@ -103,22 +111,28 @@ function authorized_(given) {
   return Boolean(secret) && String(given || "") === secret;
 }
 
-// { result: registered | blocked | expired | unregistered, studentId }
+// { result: registered | blocked | expired | unregistered, studentId, ownerId }
+// studentId is set only for an allowed (registered) vehicle and drives guardian messages;
+// ownerId is the student on whichever row decided the result, so the page can show who it is.
 function check_(license, province) {
   const plate = normPlate_(license);
   const prov = normText_(province);
   const today = Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd");
   let result = "unregistered";
   let studentId = "";
+  let ownerId = "";
   vehicles_().forEach(function (v) {
     if (normPlate_(v.plate) !== plate) return;
     if (v.province && prov && normText_(v.province) !== prov) return;
-    if (v.status === "blocked") { result = "blocked"; return; }
+    if (v.status === "blocked") { result = "blocked"; ownerId = v.studentId || ""; return; }
     if (v.status !== "active") return;
-    if (v.validUntil && v.validUntil < today) { if (result === "unregistered") result = "expired"; return; }
-    if (result !== "blocked") { result = "registered"; studentId = v.studentId || ""; }
+    if (v.validUntil && v.validUntil < today) {
+      if (result === "unregistered") { result = "expired"; ownerId = v.studentId || ""; }
+      return;
+    }
+    if (result !== "blocked") { result = "registered"; studentId = v.studentId || ""; ownerId = studentId; }
   });
-  return { result: result, studentId: studentId };
+  return { result: result, studentId: studentId, ownerId: ownerId };
 }
 
 function vehicles_() {
@@ -141,6 +155,77 @@ function vehicles_() {
   }
   cache.put("vehicles", JSON.stringify(rows), CACHE_SECONDS);
   return rows;
+}
+
+// ---------- student details (Student + GroupCode sheets) ----------
+
+// { id, found, name, group, room, groupName, advisor } for the page's history table, or null when
+// the plate has no student. found = false when the id is not in the Student sheet.
+function student_(id) {
+  id = String(id || "").trim();
+  if (!id || id === SECURITY_ID) return null;
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get("s:" + id);
+  if (hit) return JSON.parse(hit);
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = null;
+  STUDENT_SHEETS.some(function (n) { sheet = ss.getSheetByName(n); return Boolean(sheet); });
+  let out = { id: id, found: false, name: "", group: "", room: "", groupName: "", advisor: "" };
+  if (sheet && sheet.getLastRow() > 1) {
+    const head = headers_(sheet);
+    const idCol = head["student_id"];
+    if (idCol) {
+      const cell = sheet.getRange(2, idCol, sheet.getLastRow() - 1, 1).createTextFinder(id).matchEntireCell(true).findNext();
+      if (cell) {
+        const row = sheet.getRange(cell.getRow(), 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+        const col = function (name) { return head[name] ? String(row[head[name] - 1] || "").trim() : ""; };
+        const code = col("groupcode");
+        const g = groups_()[code] || {};
+        out = {
+          id: id, found: true,
+          name: col("student_name"),
+          group: code,
+          room: [col("กลุ่มเรียน"), g.short].filter(String).join(" · "),
+          groupName: g.name || "",
+          advisor: g.advisor || "",
+        };
+      }
+    }
+  }
+  cache.put("s:" + id, JSON.stringify(out), CACHE_SECONDS * 5);
+  return out;
+}
+
+// รหัสกลุ่มเรียน -> { short, name, advisor }
+function groups_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get("groups");
+  if (hit) return JSON.parse(hit);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(GROUP_SHEET);
+  const map = {};
+  if (sheet && sheet.getLastRow() > 1) {
+    const head = headers_(sheet);
+    if (head["รหัสกลุ่มเรียน"]) {
+      sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues().forEach(function (r) {
+        const at = function (name) { return head[name] ? String(r[head[name] - 1] || "").trim() : ""; };
+        const code = at("รหัสกลุ่มเรียน");
+        if (code) map[code] = { short: at("ชื่อย่อกลุ่มเรียน"), name: at("ชื่อกลุ่มเรียน"), advisor: at("ครูที่ปรึกษา") };
+      });
+    }
+  }
+  cache.put("groups", JSON.stringify(map), CACHE_SECONDS * 5);
+  return map;
+}
+
+// Header text (trimmed, lower case) -> 1-based column. The first matching header wins.
+function headers_(sheet) {
+  const head = {};
+  sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0].forEach(function (h, i) {
+    const k = String(h || "").trim().toLowerCase();
+    if (k && !head[k]) head[k] = i + 1;
+  });
+  return head;
 }
 
 // ---------- guardian binding (LINE bot) ----------
