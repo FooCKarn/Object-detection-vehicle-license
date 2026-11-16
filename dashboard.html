@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>V-Gate · Dashboard สรุปผล</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Kanit:wght@600;700;800&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Same tokens as index.html so both pages read as one system. */
+:root {
+  --bg: #eef1f4; --panel: #ffffff; --ink: #17202b; --muted: #5d6a78; --line: #d5dce4;
+  --accent: #e8a400; --accent-ink: #3d2b00; --cool: #1f5f8b; --ok: #1d7a4c; --warn: #b0521a; --bad: #c62828;
+  --font-display: "Chakra Petch", "IBM Plex Sans Thai", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
+    --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --bad: #f26b6b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --panel: #19212a; --ink: #e6ebf0; --muted: #94a2b1; --line: #2c3743;
+  --accent: #f2b52a; --accent-ink: #2a1d00; --cool: #6fb3e0; --ok: #4cc58a; --warn: #f08a4b; --bad: #f26b6b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 48px; display: grid; gap: 20px; }
+
+.vgate { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 32px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.vgate-brand { display: flex; align-items: center; gap: 14px; min-width: 0; color: inherit; text-decoration: none; }
+.vgate-logo { width: clamp(56px, 9vw, 88px); height: auto; flex: none; }
+.vgate-name { margin: 0; font-family: "Kanit", var(--font-body); font-weight: 800; font-size: clamp(34px, 6vw, 58px); line-height: .95; color: #ffd21f; -webkit-text-stroke: 3px #f26a1b; paint-order: stroke fill; }
+.vgate-en { margin: 4px 0 0; font-family: "Kanit", var(--font-body); font-weight: 600; font-size: clamp(15px, 2.6vw, 24px); line-height: 1.1; color: #f26a1b; letter-spacing: .03em; }
+.vgate-tag { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: clamp(22px, 3.6vw, 40px); line-height: 1.3; color: #ffd21f; -webkit-text-stroke: 3px #7a5a00; paint-order: stroke fill; }
+@media (max-width: 560px) { .vgate { justify-content: center; text-align: center; } .vgate-name, .vgate-tag { -webkit-text-stroke-width: 2px; } }
+
+header.top { display: grid; gap: 4px; }
+.top-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(24px, 4vw, 32px); margin: 0; line-height: 1.1; }
+.sub { margin: 0; color: var(--muted); }
+a.back { color: var(--cool); font-weight: 600; text-decoration: none; }
+a.back:hover { text-decoration: underline; }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { font: inherit; font-size: 14px; padding: 7px 14px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn { font: inherit; font-weight: 500; font-size: 14px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.btn:disabled { opacity: .55; cursor: progress; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--cool); outline-offset: 2px; }
+.stamp { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.spacer { flex: 1 1 auto; }
+
+.notice { padding: 12px 16px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.notice form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.notice input { font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); min-width: 0; flex: 1 1 200px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; border-top: 4px solid var(--k, var(--cool)); min-width: 0; }
+.kpi .lbl { font-size: 13.5px; color: var(--muted); }
+.kpi .val { font-family: var(--font-display); font-weight: 700; font-size: 34px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.kpi .note { font-size: 12.5px; color: var(--muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.kpi.ok { --k: var(--ok); } .kpi.bad { --k: var(--bad); } .kpi.acc { --k: var(--accent); }
+
+.grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.panel-h { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.panel-h h2 { margin: 0; font-family: var(--font-display); font-size: 17px; font-weight: 600; }
+.panel-b { padding: 14px 16px 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.empty { color: var(--muted); font-size: 14px; margin: 0; }
+
+svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+svg.chart text { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .base { stroke: var(--muted); stroke-width: 1; opacity: .6; }
+svg.chart rect.hit { fill: transparent; }
+svg.chart g.col:hover rect.hit { fill: color-mix(in srgb, var(--ink) 6%, transparent); }
+svg.chart text.total { fill: var(--ink); font-weight: 600; }
+
+.hbars { display: grid; gap: 10px; }
+.hb { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 6.5em; gap: 10px; align-items: center; font-size: 14px; }
+.hb .track { height: 14px; background: color-mix(in srgb, var(--line) 55%, transparent); border-radius: 3px; overflow: hidden; }
+.hb .fill { height: 100%; border-radius: 3px; background: var(--c); min-width: 2px; }
+.hb .n { font-family: var(--font-mono); font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
+.hb .n small { color: var(--muted); }
+
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { padding-left: 16px; } th:last-child, td:last-child { padding-right: 16px; }
+th { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+td.dim { color: var(--muted); }
+td.plate { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; color: var(--panel); background: var(--c, var(--muted)); }
+
+.site-foot { border-top: 1px solid var(--line); padding-top: 16px; text-align: right; color: var(--cool); }
+.site-foot p { margin: 0; }
+.site-foot .dept { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+.site-foot .addr { font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="vgate">
+    <a class="vgate-brand" href="./" aria-label="กลับหน้าอ่านป้ายทะเบียน">
+      <img class="vgate-logo" src="lib/plvc-logo.png" alt="ตราวิทยาลัยอาชีวศึกษาพิษณุโลก" width="320" height="320">
+      <div>
+        <p class="vgate-name">V-Gate</p>
+        <p class="vgate-en">Vocational Gate</p>
+      </div>
+    </a>
+    <p class="vgate-tag">ประตูอัจฉริยะสู่วิทยาลัย</p>
+  </header>
+
+  <header class="top">
+    <div class="top-row">
+      <h1>Dashboard · สรุปผลการตรวจป้ายทะเบียน</h1>
+      <a class="back" href="./">← กลับหน้าอ่านป้าย</a>
+    </div>
+    <p class="sub">สรุปจากรายการที่บันทึกลง Google Sheet (ชีต LOG) อัปเดตอัตโนมัติทุก 1 นาที</p>
+  </header>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="ช่วงเวลา" id="range">
+      <button type="button" data-days="1" aria-pressed="false">วันนี้</button>
+      <button type="button" data-days="7" aria-pressed="true">7 วัน</button>
+      <button type="button" data-days="30" aria-pressed="false">30 วัน</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="stamp" id="stamp">กำลังโหลด…</span>
+    <button class="btn" type="button" id="reload">รีเฟรช</button>
+  </div>
+
+  <div class="notice" id="notice" hidden>
+    <span id="noticeText"></span>
+    <form id="keyForm" hidden>
+      <input id="keyIn" type="password" autocomplete="current-password" placeholder="รหัสเข้าดู Dashboard" aria-label="รหัสเข้าดู Dashboard">
+      <button class="btn primary" type="submit">เข้าดู</button>
+    </form>
+  </div>
+
+  <section class="kpis" aria-label="ตัวเลขสรุป">
+    <div class="kpi acc"><div class="lbl">รถที่ตรวจพบทั้งหมด</div><div class="val" id="kTotal">–</div><div class="note" id="kTotalN"></div></div>
+    <div class="kpi"><div class="lbl">วันนี้</div><div class="val" id="kToday">–</div><div class="note" id="kTodayN"></div></div>
+    <div class="kpi ok"><div class="lbl">ลงทะเบียนแล้ว (ผ่าน)</div><div class="val" id="kOk">–</div><div class="note" id="kOkN"></div></div>
+    <div class="kpi bad"><div class="lbl">ไม่ผ่าน</div><div class="val" id="kBad">–</div><div class="note" id="kBadN"></div></div>
+    <div class="kpi"><div class="lbl">ป้ายทะเบียนไม่ซ้ำ</div><div class="val" id="kUniq">–</div><div class="note" id="kUniqN"></div></div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel" aria-labelledby="hTrend">
+      <div class="panel-h"><h2 id="hTrend">จำนวนรถรายวัน</h2>
+        <div class="legend"><span><i style="background:var(--ok)"></i>ผ่าน</span><span><i style="background:var(--bad)"></i>ไม่ผ่าน</span><span><i style="background:var(--muted)"></i>ไม่ทราบผล</span></div></div>
+      <div class="panel-b" id="trend"><p class="empty">กำลังโหลด…</p></div>
+    </section>
+    <section class="panel" aria-labelledby="hRes">
+      <div class="panel-h"><h2 id="hRes">ผลการตรวจสอบ</h2></div>
+      <div class="panel-b" id="results"><p class="empty">กำลังโหลด…</p></div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="panel" aria-labelledby="hHour">
+      <div class="panel-h"><h2 id="hHour">ช่วงเวลาที่มีรถเข้า–ออก</h2><span class="stamp">รวมทุกวันในช่วงที่เลือก</span></div>
+      <div class="panel-b" id="hours"><p class="empty">กำลังโหลด…</p></div>
+    </section>
+    <section class="panel" aria-labelledby="hTop">
+      <div class="panel-h"><h2 id="hTop">รถไม่ผ่านที่พบบ่อย</h2></div>
+      <div class="tbl-wrap" id="top"><p class="empty panel-b">กำลังโหลด…</p></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="hRecent">
+    <div class="panel-h"><h2 id="hRecent">รายการล่าสุด</h2><span class="stamp" id="recentN"></span></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>เวลา</th><th>ทะเบียน</th><th>จังหวัด</th><th>รหัสนักเรียน</th><th>ชื่อ</th><th>ห้องเรียน</th><th>ผล</th></tr></thead>
+        <tbody id="recent"><tr><td colspan="7" class="empty">กำลังโหลด…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="site-foot">
+    <p class="dept">แผนกวิชา เทคโนโลยีธุรกิจดิจิทัล</p>
+    <p class="addr">วิทยาลัยอาชีวศึกษาพิษณุโลก 60 ถนนวังจันทน์ อ.เมือง จ.พิษณุโลก 65000</p>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const FETCH_DAYS = 30;          // one request covers every range; switching ranges is instant
+  const REFRESH_MS = 60000;
+  const RECENT = 30;
+  const KEY_STORE = "vgate.dashboardKey";
+  const RESULTS = {
+    registered:   { label: "ลงทะเบียนแล้ว", c: "var(--ok)",   pass: true },
+    unregistered: { label: "ไม่ได้ลงทะเบียน", c: "var(--bad)",  pass: false },
+    blocked:      { label: "ถูกระงับสิทธิ์", c: "var(--bad)",  pass: false },
+    expired:      { label: "สิทธิ์หมดอายุ", c: "var(--warn)", pass: false },
+    unknown:      { label: "ไม่ทราบผล",    c: "var(--muted)", pass: null },
+  };
+  const TH_MONTH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = n => n.toLocaleString("th-TH");
+  const pct = (a, b) => b ? Math.round(a * 100 / b) + "%" : "–";
+  const normPlate = s => String(s || "").replace(/[\s\-–.]/g, "");
+  const resultOf = r => RESULTS[r] ? r : "unknown";
+  const store = { get: k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+                  set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} } };
+
+  // Dates are the sheet's Bangkok wall-clock strings; do day arithmetic in UTC so the viewer's zone never shifts them.
+  const dayAdd = (ymd, n) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  const dayLabel = ymd => { const [, m, d] = ymd.split("-").map(Number); return `${d} ${TH_MONTH[m - 1]}`; };
+
+  let data = null, days = 7, timer = 0, loading = false;
+  try { const saved = Number(sessionStorage.getItem("vgate.range")); if ([1, 7, 30].includes(saved)) days = saved; } catch {}
+
+  function setRange(d) {
+    days = d;
+    try { sessionStorage.setItem("vgate.range", String(d)); } catch {}
+    document.querySelectorAll("#range button").forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.days) === d)));
+    if (data) render();
+  }
+  document.querySelectorAll("#range button").forEach(b => b.addEventListener("click", () => setRange(Number(b.dataset.days))));
+  setRange(days);
+
+  function notice(text, askKey) {
+    $("notice").hidden = !text;
+    $("noticeText").textContent = text || "";
+    $("keyForm").hidden = !askKey;
+    if (askKey) $("keyIn").focus();
+  }
+  $("keyForm").addEventListener("submit", e => { e.preventDefault(); store.set(KEY_STORE, $("keyIn").value.trim()); $("keyIn").value = ""; load(); });
+  $("reload").addEventListener("click", () => load());
+
+  async function load() {
+    if (loading) return;
+    loading = true; $("reload").disabled = true; clearTimeout(timer);
+    try {
+      const r = await fetch(`api/summary?days=${FETCH_DAYS}`, { headers: { "X-Dashboard-Key": store.get(KEY_STORE) }, cache: "no-store" });
+      const j = await r.json().catch(() => ({ ok: false, error: "ตอบกลับไม่ใช่ JSON" }));
+      if (r.status === 401) {
+        const had = store.get(KEY_STORE); store.set(KEY_STORE, "");
+        notice(had ? "รหัสไม่ถูกต้อง ลองใหม่อีกครั้ง" : "หน้านี้ต้องใช้รหัสเข้าดู", true);
+        return;
+      }
+      if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      data = j; notice("");
+      render();
+    } catch (err) {
+      const msg = String(err.message || err);
+      const hint = /APPS_SCRIPT_URL/.test(msg) ? "ยังไม่ได้ตั้งค่า APPS_SCRIPT_URL / APPS_SCRIPT_SECRET ใน Vercel"
+        : /new deployment/.test(msg) ? "Apps Script ยังเป็นเวอร์ชันเก่า: วาง Code.gs ใหม่แล้ว Deploy > Manage deployments > New version"
+        : "โหลดข้อมูลไม่สำเร็จ: " + msg;
+      notice(data ? hint + " (แสดงข้อมูลล่าสุดที่โหลดได้)" : hint, false);
+      if (!data) $("stamp").textContent = "โหลดไม่สำเร็จ";
+    } finally {
+      loading = false; $("reload").disabled = false;
+      timer = setTimeout(load, REFRESH_MS);
+    }
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !loading) load(); });
+
+  function render() {
+    const today = data.now.slice(0, 10);
+    const from = dayAdd(today, -(days - 1));
+    const all = data.rows.map(r => ({ id: r[0], time: r[1], day: r[1].slice(0, 10), hour: Number(r[1].slice(11, 13)), plate: r[2], province: r[3], res: resultOf(r[4]), sid: r[5] }));
+    const rows = all.filter(r => r.day >= from && r.day <= today);
+    const rangeName = days === 1 ? "วันนี้" : `${days} วันล่าสุด`;
+
+    // KPIs
+    const ok = rows.filter(r => RESULTS[r.res].pass === true).length;
+    const bad = rows.filter(r => RESULTS[r.res].pass === false).length;
+    const todayN = all.filter(r => r.day === today).length;
+    const yN = all.filter(r => r.day === dayAdd(today, -1)).length;
+    const uniq = new Set(rows.map(r => normPlate(r.plate))).size;
+    $("kTotal").textContent = fmt(rows.length); $("kTotalN").textContent = rangeName;
+    $("kToday").textContent = fmt(todayN);
+    const diff = todayN - yN;
+    $("kTodayN").textContent = `เมื่อวาน ${fmt(yN)} (${diff > 0 ? "+" : ""}${fmt(diff)})`;
+    $("kOk").textContent = fmt(ok); $("kOkN").textContent = pct(ok, rows.length) + " ของทั้งหมด";
+    $("kBad").textContent = fmt(bad); $("kBadN").textContent = pct(bad, rows.length) + " ของทั้งหมด";
+    $("kUniq").textContent = fmt(uniq); $("kUniqN").textContent = rows.length ? `เฉลี่ย ${(rows.length / uniq).toFixed(1)} ครั้ง/คัน` : "";
+
+    // Trend: per day, or per hour for "today"
+    let cols;
+    if (days === 1) {
+      $("hTrend").textContent = "จำนวนรถรายชั่วโมง (วันนี้)";
+      cols = Array.from({ length: 24 }, (_, h) => ({ key: h, label: String(h).padStart(2, "0"), tip: `${String(h).padStart(2, "0")}:00–${String(h).padStart(2, "0")}:59` }));
+      fillCols(cols, rows, r => r.hour);
+    } else {
+      $("hTrend").textContent = "จำนวนรถรายวัน";
+      cols = Array.from({ length: days }, (_, i) => { const d = dayAdd(from, i); return { key: d, label: dayLabel(d), tip: dayLabel(d) }; });
+      fillCols(cols, rows, r => r.day);
+    }
+    $("trend").innerHTML = rows.length ? stacked(cols) : `<p class="empty">ยังไม่มีรายการใน${rangeName}</p>`;
+
+    // Result breakdown
+    const counts = Object.keys(RESULTS).map(k => ({ k, n: rows.filter(r => r.res === k).length })).filter(x => x.n || x.k !== "unknown");
+    const max = Math.max(1, ...counts.map(x => x.n));
+    $("results").innerHTML = rows.length ? `<div class="hbars">${counts.map(x => `
+      <div class="hb" style="--c:${RESULTS[x.k].c}"><span>${RESULTS[x.k].label}</span>
+        <div class="track"><div class="fill" style="width:${x.n ? Math.max(1, x.n * 100 / max) : 0}%"></div></div>
+        <span class="n">${fmt(x.n)} <small>${pct(x.n, rows.length)}</small></span></div>`).join("")}</div>`
+      : `<p class="empty">ยังไม่มีรายการใน${rangeName}</p>`;
+
+    // Hour-of-day distribution across the range, 05:00-21:00 plus any busy hour outside it
+    const hcols = Array.from({ length: 24 }, (_, h) => ({ key: h, label: String(h).padStart(2, "0"), tip: `${String(h).padStart(2, "0")}:00–${String(h).padStart(2, "0")}:59` }));
+    fillCols(hcols, rows, r => r.hour);
+    const used = hcols.filter(c => c.total).map(c => c.key);
+    const lo = Math.min(5, ...used), hi = Math.max(21, ...used);
+    const shown = hcols.slice(lo, hi + 1);
+    const peak = shown.reduce((a, c) => c.total > a.total ? c : a, shown[0]);
+    $("hours").innerHTML = rows.length ? stacked(shown) + `<p class="empty" style="margin-top:8px">ช่วงที่มีรถมากที่สุด: <b style="color:var(--ink)">${peak.tip} น.</b> (${fmt(peak.total)} คัน)</p>`
+      : `<p class="empty">ยังไม่มีรายการใน${rangeName}</p>`;
+
+    // Most frequent failing plates
+    const fails = new Map();
+    rows.filter(r => RESULTS[r.res].pass === false).forEach(r => {
+      const k = normPlate(r.plate); const f = fails.get(k) || { plate: r.plate, province: r.province, n: 0, last: "", res: r.res };
+      f.n++; if (r.time >= f.last) { f.last = r.time; f.res = r.res; if (r.province) f.province = r.province; } fails.set(k, f);
+    });
+    const topList = [...fails.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1)).slice(0, 8);
+    $("top").innerHTML = topList.length ? `<table><thead><tr><th>ทะเบียน</th><th>จังหวัด</th><th>ครั้ง</th><th>ล่าสุด</th><th>ผล</th></tr></thead><tbody>${topList.map(f => `
+      <tr><td class="plate">${esc(f.plate)}</td><td class="dim">${esc(f.province) || "–"}</td><td class="num">${fmt(f.n)}</td>
+      <td class="num dim">${esc(shortTime(f.last, today))}</td><td>${tag(f.res)}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="empty panel-b">ไม่มีรถไม่ผ่านใน${rangeName}</p>`;
+
+    // Recent readings (newest first)
+    const recent = rows.slice(-RECENT).reverse();
+    $("recentN").textContent = rows.length ? `${fmt(recent.length)} จาก ${fmt(rows.length)} รายการ` : "";
+    $("recent").innerHTML = recent.length ? recent.map(r => {
+      const s = (data.students || {})[r.sid] || null;
+      return `<tr><td class="num">${esc(shortTime(r.time, today))}</td><td class="plate">${esc(r.plate)}</td><td class="dim">${esc(r.province) || "–"}</td>
+        <td class="num">${esc(r.sid) || '<span class="dim">–</span>'}</td><td>${s && s.name ? esc(s.name) : '<span class="dim">–</span>'}</td>
+        <td class="dim">${s && s.room ? esc(s.room) : "–"}</td><td>${tag(r.res)}</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="empty">ยังไม่มีรายการใน${rangeName}</td></tr>`;
+
+    $("stamp").textContent = `อัปเดต ${data.now.slice(11, 16)} น.`;
+  }
+
+  function shortTime(t, today) { return t.slice(0, 10) === today ? t.slice(11, 16) : `${dayLabel(t.slice(0, 10))} ${t.slice(11, 16)}`; }
+  function tag(res) { return `<span class="tag" style="--c:${RESULTS[res].c}">${RESULTS[res].label}</span>`; }
+
+  function fillCols(cols, rows, keyOf) {
+    const at = new Map(cols.map(c => [c.key, c]));
+    cols.forEach(c => { c.ok = 0; c.bad = 0; c.unk = 0; c.total = 0; });
+    rows.forEach(r => { const c = at.get(keyOf(r)); if (!c) return; const p = RESULTS[r.res].pass;
+      if (p === true) c.ok++; else if (p === false) c.bad++; else c.unk++; c.total++; });
+  }
+
+  // Stacked columns: ผ่าน at the base, ไม่ผ่าน above, unknown on top. Native <title> tooltips.
+  function stacked(cols) {
+    const W = 640, H = 220, L = 34, R = 6, T = 16, B = 26;
+    const max = Math.max(1, ...cols.map(c => c.total));
+    const step = niceStep(max), top = Math.ceil(max / step) * step;
+    const y = v => T + (H - T - B) * (1 - v / top);
+    const cw = (W - L - R) / cols.length, bw = Math.max(3, Math.min(36, cw * 0.66));
+    const every = Math.ceil(cols.length / Math.floor((W - L - R) / 44));
+    let g = "";
+    for (let v = 0; v <= top; v += step) g += `<line class="${v ? "grid" : "base"}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    cols.forEach((c, i) => {
+      const x = L + i * cw + (cw - bw) / 2;
+      let acc = 0, segs = "";
+      for (const [n, col] of [[c.ok, "var(--ok)"], [c.bad, "var(--bad)"], [c.unk, "var(--muted)"]]) {
+        if (!n) continue;
+        const y0 = y(acc), y1 = y(acc + n); acc += n;
+        segs += `<rect x="${x}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1 - (acc < c.total ? 1 : 0))}" fill="${col}" rx="1.5"/>`;
+      }
+      const lbl = i % every === 0 ? `<text x="${x + bw / 2}" y="${H - B + 16}" text-anchor="middle">${esc(c.label)}</text>` : "";
+      const tot = c.total && cols.length <= 31 && bw >= 14 ? `<text class="total" x="${x + bw / 2}" y="${y(c.total) - 4}" text-anchor="middle">${c.total}</text>` : "";
+      g += `<g class="col"><rect class="hit" x="${L + i * cw}" y="${T}" width="${cw}" height="${H - T - B}"/>${segs}${tot}${lbl}
+        <title>${esc(c.tip)}\nทั้งหมด ${c.total} · ผ่าน ${c.ok} · ไม่ผ่าน ${c.bad}${c.unk ? " · ไม่ทราบผล " + c.unk : ""}</title></g>`;
+    });
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="กราฟแท่งจำนวนรถ">${g}</svg>`;
+  }
+  function niceStep(max) { const raw = max / 4, p = 10 ** Math.floor(Math.log10(raw)); return Math.max(1, [1, 2, 5, 10].map(m => m * p).find(s => s >= raw)); }
+
+  load();
+})();
+</script>
+</body>
+</html>
