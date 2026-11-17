@@ -17,7 +17,7 @@ function liffLink(mode) {
   return id ? `\nhttps://liff.line.me/${id}?mode=${mode}` : "";
 }
 const welcome = () => "สวัสดีครับ นี่คือระบบแจ้งเตือนการเข้า-ออกวิทยาลัย V-Gate\n" +
-  "กดปุ่ม \"ลงทะเบียน\" ที่เมนูด้านล่าง แล้วกรอกรหัสผูกบัญชี 6 หลักที่วิทยาลัยให้ไว้" + liffLink("register");
+  "กดปุ่ม \"ลงทะเบียน\" ที่เมนูด้านล่าง แล้วกรอกรหัสนักศึกษาของบุตรหลาน (มีหลายคนเพิ่มได้ทีละคน)" + liffLink("register");
 const useMenu = () => "กรุณาใช้เมนูด้านล่างเพื่อลงทะเบียนหรือยกเลิกการแจ้งเตือน\n" +
   "แชตนี้ใช้สำหรับส่งแจ้งเตือนเท่านั้น" + liffLink("register");
 const legacyOn = () => process.env.LEGACY_CHAT_COMMANDS !== "off";

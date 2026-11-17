@@ -37,7 +37,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: 24px; margin
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; }
 h2 { font-size: 16px; font-weight: 600; margin: 0; }
 label { font-weight: 500; display: grid; gap: 6px; }
-input[type="text"] { font: 600 22px/1.2 var(--font-display); letter-spacing: .25em; text-transform: uppercase; text-align: center;
+input[type="text"] { font: 600 22px/1.2 var(--font-display); letter-spacing: .12em; text-transform: uppercase; text-align: center;
   padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); width: 100%; }
 input[type="text"]:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .consent { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-weight: 400; color: var(--muted); font-size: 14px; }
@@ -48,10 +48,17 @@ button.danger { background: transparent; color: var(--warn); border: 1.5px solid
 button.plain { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 button:disabled { opacity: .5; cursor: default; }
 ul.students { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-ul.students li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+ul.students li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+ul.students li .who { display: grid; }
+ul.students li .id { font-size: 13px; color: var(--muted); }
+ul.students li button { width: auto; min-height: 40px; padding: 8px 14px; font-size: 14px; }
 .tag { font-size: 13px; white-space: nowrap; }
 .tag.yes { color: var(--ok); }
-.tag.no, .tag.pending { color: var(--muted); }
+.tag.no, .tag.pending, .tag.wait { color: var(--muted); }
+.confirm-box { display: grid; gap: 4px; padding: 14px; border-radius: 8px; background: var(--bg); text-align: center; }
+.confirm-box .big { font: 700 22px/1.3 var(--font-display); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button.link { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 4px; min-height: 0; font-weight: 400; font-size: 14px; }
 .msg { margin: 0; padding: 12px; border-radius: 8px; border: 1px solid var(--line); }
 .msg.ok { border-color: var(--ok); color: var(--ok); }
 .msg.err { border-color: var(--warn); color: var(--warn); }
@@ -68,26 +75,34 @@ ul.students li { display: flex; justify-content: space-between; gap: 12px; paddi
   <p class="msg" id="msg" role="status" hidden></p>
 
   <section class="card" id="current" hidden>
-    <h2>นักเรียนที่บัญชีนี้ผูกไว้</h2>
+    <h2>นักเรียนที่รับแจ้งเตือน</h2>
     <ul class="students" id="students"></ul>
-    <button class="plain" id="resume" type="button" hidden>เปิดรับแจ้งเตือนอีกครั้ง</button>
+    <button class="danger" type="button" id="cancel-all" hidden>ยกเลิกทั้งหมด</button>
   </section>
 
-  <form class="card" id="register" hidden>
-    <h2 id="register-title">ลงทะเบียนรับแจ้งเตือน</h2>
-    <label>รหัสผูกบัญชี 6 หลักที่วิทยาลัยให้ไว้
-      <input type="text" id="code" maxlength="6" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" required pattern="[A-Za-z0-9]{6}">
+  <!-- Step 1: type the student ID -->
+  <form class="card" id="add" hidden>
+    <h2 id="add-title">เพิ่มนักเรียน</h2>
+    <label><span id="id-label">รหัสนักศึกษา</span>
+      <input type="text" id="sid" maxlength="20" autocomplete="off" spellcheck="false" inputmode="numeric" required>
     </label>
-    <label class="consent">
-      <input type="checkbox" id="agree" required>
-      <span>ข้าพเจ้ายินยอมให้วิทยาลัยใช้ข้อมูลทะเบียนรถและเวลาเข้า-ออกวิทยาลัยของนักเรียน เพื่อส่งแจ้งเตือนมายังบัญชี LINE นี้ และยกเลิกได้ทุกเมื่อจากเมนู "ยกเลิกการแจ้งเตือน"</span>
-    </label>
-    <button class="primary" type="submit" id="submit">ยืนยันลงทะเบียน</button>
+    <button class="primary" type="submit" id="next">ถัดไป</button>
+    <button class="link" type="button" id="use-code">มีรหัสผูกบัญชีจากวิทยาลัย (เช่น เจ้าหน้าที่ รปภ.)</button>
   </form>
 
-  <section class="card" id="cancel" hidden>
-    <p class="muted">เมื่อยกเลิกแล้ว จะไม่ได้รับแจ้งเตือนของนักเรียนทุกคนด้านบน กลับมาลงทะเบียนใหม่ได้ทุกเมื่อ</p>
-    <button class="danger" type="button" id="cancel-btn">ยกเลิกการแจ้งเตือน</button>
+  <!-- Step 2: check the name and confirm -->
+  <section class="card" id="confirm" hidden>
+    <h2>ใช่นักเรียนคนนี้ไหม</h2>
+    <div class="confirm-box">
+      <span class="big" id="c-name"></span>
+      <span class="muted" id="c-id"></span>
+    </div>
+    <p class="muted" id="c-note" hidden></p>
+    <p class="muted">เมื่อกดยืนยัน ถือว่าท่านยินยอมให้วิทยาลัยใช้ข้อมูลทะเบียนรถและเวลาเข้า-ออกวิทยาลัยของนักเรียน เพื่อส่งแจ้งเตือนมายังบัญชี LINE นี้ ยกเลิกได้ทุกเมื่อจากหน้านี้</p>
+    <div class="row2">
+      <button class="plain" type="button" id="back">ไม่ใช่ แก้รหัส</button>
+      <button class="primary" type="button" id="ok">ใช่ ลงทะเบียน</button>
+    </div>
   </section>
 
   <button class="plain" type="button" id="close" hidden>ปิดหน้านี้</button>
@@ -95,19 +110,27 @@ ul.students li { display: flex; justify-content: space-between; gap: 12px; paddi
 
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
+// One page for everything (the rich menu's ?mode=register and ?mode=cancel open the same screen):
+// the list of children this LINE account follows, each with its own cancel / turn-on button,
+// and a box to add one more child by student ID. Adding takes two taps: "ถัดไป" shows the
+// student's masked name, "ใช่ ลงทะเบียน" confirms.
 const ERRORS = {
-  not_found: "ไม่พบรหัสนี้ กรุณาตรวจสอบรหัสอีกครั้ง",
+  not_found: "ไม่พบรหัสนี้ในระบบ กรุณาตรวจสอบอีกครั้ง",
+  bad_student: "รหัสนักศึกษาไม่ถูกต้อง กรอกเฉพาะตัวเลขหรือตัวอักษร",
   bad_code: "รหัสผูกบัญชีต้องเป็นตัวอักษรหรือตัวเลข 6 หลัก",
-  locked: "กรอกรหัสผิดหลายครั้ง กรุณาลองใหม่ภายหลัง หรือติดต่อวิทยาลัย",
+  locked: "ลองหลายครั้งเกินไป กรุณาลองใหม่ในอีก 1 ชั่วโมง หรือติดต่อวิทยาลัย",
   already_bound: "รหัสนี้ถูกผูกกับบัญชี LINE อื่นแล้ว กรุณาติดต่อวิทยาลัย",
+  full: "นักเรียนคนนี้มีผู้รับแจ้งเตือนครบจำนวนแล้ว กรุณาติดต่อวิทยาลัย",
   not_bound: "บัญชีนี้ยังไม่ได้ลงทะเบียน",
   bad_token: "ยืนยันตัวตน LINE ไม่สำเร็จ กรุณาปิดหน้านี้แล้วเปิดใหม่จากเมนูในแชต",
   not_ready: "ระบบยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง",
 };
-const CONSENT_LABEL = { yes: "รับแจ้งเตือนอยู่", no: "ยกเลิกแล้ว", pending: "ยังไม่ได้ยินยอม" };
+const CONSENT_LABEL = { yes: "รับแจ้งเตือนอยู่", no: "ยกเลิกแล้ว", pending: "ยังไม่ได้ยินยอม", wait: "รอวิทยาลัยอนุมัติ" };
 const $ = (id) => document.getElementById(id);
 let mode = "register";
+let useCode = false;  // the box takes the old 6-character bind code instead of a student ID
 let students = [];
+let pending = null;   // what step 2 will register: { studentId } or { code }
 
 function show(id, on) { $(id).hidden = !on; }
 function message(text, kind) {
@@ -145,35 +168,54 @@ async function call(action, extra) {
 
 function errorText(d) { return ERRORS[d.error] || ERRORS.not_ready; }
 
+async function busy(btn, work) {
+  btn.disabled = true;
+  try { return await work(); } finally { btn.disabled = false; }
+}
+
 function render() {
   const list = $("students");
   list.replaceChildren();
   for (const s of students) {
     const li = document.createElement("li");
+    const who = document.createElement("span");
+    who.className = "who";
     const name = document.createElement("span");
     name.textContent = s.name;
+    const id = document.createElement("span");
+    id.className = "id";
+    id.textContent = s.studentId === "SECURITY" ? "เจ้าหน้าที่ รปภ." : "รหัส " + s.studentId;
     const tag = document.createElement("span");
     tag.className = "tag " + s.consent;
     tag.textContent = CONSENT_LABEL[s.consent] || s.consent;
-    li.append(name, tag);
+    who.append(name, id, tag);
+    const btn = document.createElement("button");
+    if (s.consent === "yes" || s.consent === "wait") {
+      btn.className = "danger";
+      btn.textContent = "ยกเลิก";
+      btn.onclick = () => busy(btn, () => change("cancel", s));
+    } else {
+      btn.className = "plain";
+      btn.textContent = "เปิดแจ้งเตือน";
+      btn.onclick = () => busy(btn, () => change("resume", s));
+    }
+    li.append(who, btn);
     list.append(li);
   }
-  const active = students.filter((s) => s.consent === "yes");
+  const active = students.filter((s) => s.consent === "yes" || s.consent === "wait");
   show("current", students.length > 0);
-  if (mode === "cancel") {
-    $("title").textContent = "ยกเลิกการแจ้งเตือน";
-    $("subtitle").textContent = active.length ? "หยุดรับแจ้งเตือนการเข้า-ออกวิทยาลัย" : "บัญชีนี้ไม่ได้รับแจ้งเตือนอยู่";
-    show("cancel", active.length > 0);
-    show("register", false);
-    show("resume", false);
-  } else {
-    $("title").textContent = "ลงทะเบียนรับแจ้งเตือน";
-    $("subtitle").textContent = "รับแจ้งเตือนทาง LINE เมื่อนักเรียนเข้า-ออกวิทยาลัย";
-    $("register-title").textContent = students.length ? "เพิ่มนักเรียนอีกคน" : "กรอกรหัสผูกบัญชี";
-    show("register", true);
-    show("cancel", false);
-    show("resume", students.some((s) => s.consent !== "yes"));
-  }
+  show("cancel-all", active.length > 1);
+  $("title").textContent = mode === "cancel" ? "ยกเลิกการแจ้งเตือน" : "ลงทะเบียนรับแจ้งเตือน";
+  $("subtitle").textContent = mode === "cancel"
+    ? (active.length ? "กด \"ยกเลิก\" ที่ชื่อนักเรียนที่ไม่ต้องการรับแจ้งเตือน" : "บัญชีนี้ไม่ได้รับแจ้งเตือนอยู่")
+    : "กรอกรหัสนักศึกษาของบุตรหลาน มีหลายคนก็เพิ่มได้ทีละคน";
+  $("add-title").textContent = students.length ? "เพิ่มนักเรียนอีกคน" : "เพิ่มนักเรียน";
+  showStep(pending ? 2 : 1);
+}
+
+function showStep(n) {
+  show("add", n === 1);
+  show("confirm", n === 2);
 }
 
 async function refresh() {
@@ -190,43 +232,90 @@ function done(text) {
   show("close", liff.isInClient());
 }
 
-$("register").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const code = $("code").value.trim().toUpperCase();
-  if (!/^[A-Z0-9]{6}$/.test(code)) return message(ERRORS.bad_code, "err");
-  $("submit").disabled = true;
+async function change(action, s) {
   message("");
-  const d = await call("register", { code });
-  $("submit").disabled = false;
-  if (d.error === "redirecting") return;
-  if (!d.ok) return message(errorText(d), "err");
-  $("code").value = "";
-  $("agree").checked = false;
-  await refresh();
-  done(`ลงทะเบียนสำเร็จ จะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย`);
-});
-
-$("resume").addEventListener("click", async () => {
-  $("resume").disabled = true;
-  const d = await call("resume");
-  $("resume").disabled = false;
+  const d = await call(action, { studentId: s.studentId });
   if (d.error === "redirecting") return;
   if (!d.ok) return message(errorText(d), "err");
   await refresh();
-  done("เปิดรับแจ้งเตือนอีกครั้งแล้ว");
+  done(action === "cancel" ? `ยกเลิกการแจ้งเตือนของ ${s.name} แล้ว` : `เปิดรับแจ้งเตือนของ ${s.name} แล้ว`);
+}
+
+$("use-code").addEventListener("click", () => {
+  useCode = !useCode;
+  const box = $("sid");
+  box.value = "";
+  box.inputMode = useCode ? "text" : "numeric";
+  box.maxLength = useCode ? 6 : 20;
+  $("id-label").textContent = useCode ? "รหัสผูกบัญชี 6 หลัก" : "รหัสนักศึกษา";
+  $("use-code").textContent = useCode ? "กรอกรหัสนักศึกษาแทน" : "มีรหัสผูกบัญชีจากวิทยาลัย (เช่น เจ้าหน้าที่ รปภ.)";
+  box.focus();
 });
 
-$("cancel-btn").addEventListener("click", async () => {
-  if (!confirm("ยืนยันยกเลิกการรับแจ้งเตือน?")) return;
-  $("cancel-btn").disabled = true;
+// Step 1 -> 2
+$("add").addEventListener("submit", (e) => {
+  e.preventDefault();
+  busy($("next"), async () => {
+    message("");
+    const value = $("sid").value.replace(/[\s-]/g, "");
+    if (useCode) {
+      const code = value.toUpperCase();
+      if (!/^[A-Z0-9]{6}$/.test(code)) return message(ERRORS.bad_code, "err");
+      pending = { code };
+      $("c-name").textContent = code;
+      $("c-id").textContent = "รหัสผูกบัญชี";
+      show("c-note", false);
+      return showStep(2);
+    }
+    if (!/^[0-9A-Za-z]{4,20}$/.test(value)) return message(ERRORS.bad_student, "err");
+    const d = await call("preview", { studentId: value });
+    if (d.error === "redirecting") return;
+    if (!d.ok) return message(errorText(d), "err");
+    if (d.already === "yes") return message(`บัญชีนี้รับแจ้งเตือนของ ${d.name} อยู่แล้ว`, "ok");
+    pending = { studentId: d.studentId };
+    $("c-name").textContent = d.name;
+    $("c-id").textContent = "รหัส " + d.studentId;
+    const note = d.others
+      ? `นักเรียนคนนี้มีผู้ปกครองรับแจ้งเตือนอยู่แล้ว ${d.others} บัญชี ระบบจะแจ้งให้บัญชีเหล่านั้นทราบ` +
+        (d.approval ? " และต้องรอวิทยาลัยอนุมัติก่อน" : "")
+      : "";
+    $("c-note").textContent = note;
+    show("c-note", Boolean(note));
+    showStep(2);
+  });
+});
+
+$("back").addEventListener("click", () => {
+  pending = null;
+  message("");
+  showStep(1);
+  $("sid").focus();
+});
+
+// Step 2: register
+$("ok").addEventListener("click", () => busy($("ok"), async () => {
+  if (!pending) return showStep(1);
+  message("");
+  const d = await call("register", pending);
+  if (d.error === "redirecting") return;
+  if (!d.ok) { pending = null; showStep(1); return message(errorText(d), "err"); }
+  pending = null;
+  $("sid").value = "";
+  await refresh();
+  done(d.consent === "wait"
+    ? `ส่งคำขอแล้ว รอวิทยาลัยอนุมัติ จากนั้นจะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย`
+    : `ลงทะเบียนสำเร็จ จะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย มีบุตรหลานอีกคน กรอกรหัสเพิ่มได้เลย`);
+}));
+
+$("cancel-all").addEventListener("click", () => busy($("cancel-all"), async () => {
+  if (!confirm("ยกเลิกการแจ้งเตือนของนักเรียนทุกคน?")) return;
+  message("");
   const d = await call("cancel");
-  $("cancel-btn").disabled = false;
   if (d.error === "redirecting") return;
   if (!d.ok) return message(errorText(d), "err");
   await refresh();
-  show("cancel", false);
-  done("ยกเลิกการรับแจ้งเตือนแล้ว");
-});
+  done("ยกเลิกการแจ้งเตือนทั้งหมดแล้ว");
+}));
 
 $("close").addEventListener("click", () => liff.closeWindow());
 

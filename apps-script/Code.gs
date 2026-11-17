@@ -9,11 +9,18 @@
 // "GroupCode" sheet: one row per study group. Columns found by header: รหัสกลุ่มเรียน,
 //   ชื่อกลุ่มเรียน, ชื่อย่อกลุ่มเรียน, ครูที่ปรึกษา. A student's GroupCode points at รหัสกลุ่มเรียน.
 // "STUDENT_GUARDIAN" sheet:  student_id | student_name | bind_code | line_user_id | consent
-//   One row per guardian. Staff fill student_id, student_name and bind_code (run generateBindCodes()
-//   to fill empty codes; keep the bind_code column formatted as Plain text). The script fills
-//   line_user_id and consent when a guardian registers on the LIFF page (or binds through the bot).
-//   consent: pending (bound, not yet agreed) | yes | no
-//   Rows with student_id = SECURITY receive alerts about blocked / expired / unregistered vehicles.
+//   One row per (student, LINE account): a student can have several guardians and a guardian
+//   several students. Guardians register on the LIFF page by typing the student ID only; the script
+//   checks the ID against the Student sheet (or a row staff already made here), fills an empty row
+//   for that student or appends a new one. bind_code is optional now: staff may still fill it (run
+//   generateBindCodes(); keep the column as Plain text) and a guardian may type the code instead.
+//   consent: pending (bound in chat, not yet agreed) | yes | no | wait (waiting for staff approval;
+//   staff change it to yes in the sheet, or delete the row)
+//   Rows with student_id = SECURITY receive alerts about blocked / expired / unregistered vehicles;
+//   those can only be joined with their bind_code, never by typing "SECURITY".
+// Script property GUARDIAN_APPROVAL = on makes every guardian after the first for a student wait for
+//   staff approval. Off (default): they are added at once and the existing guardians get a LINE
+//   message saying another account joined.
 //
 // Deploy: Extensions > Apps Script, paste this file, then Project Settings > Script properties,
 // add SECRET = <long random string>. Deploy > New deployment > Web app, Execute as: Me,
@@ -29,7 +36,9 @@ const SECURITY_ID = "SECURITY";
 const TIME_ZONE = "Asia/Bangkok";
 const CACHE_SECONDS = 60;
 const NOTIFY_QUIET_SECONDS = 600; // do not notify about the same student / plate again within 10 minutes
-const MAX_BIND_FAILURES = 5;      // wrong bind codes allowed per LINE user per hour
+const MAX_BIND_FAILURES = 5;      // wrong bind codes / unknown student IDs allowed per LINE user per hour
+const MAX_PREVIEWS = 10;          // student ID look-ups allowed per LINE user per hour
+const MAX_GUARDIANS = 4;          // LINE accounts per student (not counting cancelled ones)
 
 function doPost(e) {
   let lock = null;
@@ -43,10 +52,12 @@ function doPost(e) {
 
     switch (body.action) {
       case "bind": return json_(bind_(body.userId, body.code, false));
-      case "register": return json_(bind_(body.userId, body.code, true));
+      case "preview": return json_(preview_(body.userId, body.studentId));
+      case "register": return json_(body.studentId ? registerStudent_(body.userId, body.studentId)
+        : bind_(body.userId, body.code, true));
       case "status": return json_(status_(body.userId));
-      case "consent": return json_(setConsent_(body.userId, "yes"));
-      case "unsubscribe": return json_(setConsent_(body.userId, "no"));
+      case "consent": return json_(setConsent_(body.userId, "yes", body.studentId));
+      case "unsubscribe": return json_(setConsent_(body.userId, "no", body.studentId));
       case "lookup": return json_(lookup_(body));
       default: return json_(logReading_(body));
     }
@@ -307,26 +318,130 @@ function bind_(userId, code, agreed) {
   const consent = agreed || g.consent === "yes" ? "yes" : "pending";
   sheet.getRange(g.row, 4).setValue(userId);
   sheet.getRange(g.row, 5).setValue(consent);
-  return { ok: true, name: g.name || g.studentId, consent: consent };
+  return { ok: true, name: maskName_(g.name || g.studentId), consent: consent };
 }
 
 // Every student this LINE user is bound to, with that row's consent, for the LIFF page.
+// Names are masked: the page is only ever shown to the guardian, but a wrong sign-up must not
+// hand a stranger the child's full name.
 function status_(userId) {
   userId = String(userId || "").trim();
   if (!userId) return { ok: false, error: "bad_request" };
   const students = guardians_().filter(function (g) { return g.userId === userId; })
-    .map(function (g) { return { name: g.name || g.studentId, consent: g.consent === "yes" ? "yes" : g.consent === "no" ? "no" : "pending" }; });
+    .map(function (g) {
+      const c = ["yes", "no", "wait"].indexOf(g.consent) >= 0 ? g.consent : "pending";
+      return { studentId: g.studentId, name: maskName_(g.name || g.studentId), consent: c };
+    });
   return { ok: true, students: students };
 }
 
-// "ยินยอม" -> yes, "ยกเลิก" -> no, for every row bound to this LINE user.
-function setConsent_(userId, value) {
+// "ยินยอม" -> yes, "ยกเลิก" -> no, for every row bound to this LINE user, or only the rows of
+// `studentId` when it is given (the LIFF page cancels or resumes one child at a time).
+// A row waiting for approval is not turned on here; cancelling it withdraws the request.
+function setConsent_(userId, value, studentId) {
   userId = String(userId || "").trim();
-  const mine = guardians_().filter(function (g) { return g.userId === userId; });
+  const only = studentId ? normStudentId_(studentId) : "";
+  const mine = guardians_().filter(function (g) { return g.userId === userId && (!only || g.studentId === only); });
   if (!userId || !mine.length) return { ok: false, error: "not_bound" };
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(GUARDIAN_SHEET);
-  mine.forEach(function (g) { sheet.getRange(g.row, 5).setValue(value); });
-  return { ok: true, names: mine.map(function (g) { return g.name || g.studentId; }) };
+  const changed = [];
+  mine.forEach(function (g) {
+    if (g.consent === "wait") {
+      if (value === "no") sheet.getRange(g.row, 4, 1, 2).setValues([["", ""]]);
+      return;
+    }
+    sheet.getRange(g.row, 5).setValue(value);
+    changed.push(g);
+  });
+  return { ok: true, names: changed.map(function (g) { return maskName_(g.name || g.studentId); }) };
+}
+
+// ---------- guardian sign-up by student ID (LIFF page) ----------
+
+// Step 1: the guardian typed a student ID. Answer with the masked name so they can check it is
+// their child before they confirm, and say whether other LINE accounts already follow this student.
+function preview_(userId, studentId) {
+  const s = lookupForGuardian_(userId, studentId, true);
+  if (!s.ok) return s;
+  return { ok: true, studentId: s.id, name: maskName_(s.name), already: s.mine ? s.mine.consent : "",
+    others: s.others.length, approval: s.others.length > 0 && approvalOn_() };
+}
+
+// Step 2: the guardian confirmed. Fill this student's empty row (one staff made) or append one.
+// Returns the LINE ids of the other guardians so the Vercel function can tell them.
+function registerStudent_(userId, studentId) {
+  const s = lookupForGuardian_(userId, studentId, false);
+  if (!s.ok) return s;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(GUARDIAN_SHEET);
+  const name = maskName_(s.name);
+  if (s.mine) {
+    const consent = s.mine.consent === "wait" ? "wait" : "yes";
+    sheet.getRange(s.mine.row, 5).setValue(consent);
+    return { ok: true, studentId: s.id, name: name, consent: consent, notify: [] };
+  }
+  if (s.others.length >= MAX_GUARDIANS) return { ok: false, error: "full" };
+  const consent = s.others.length > 0 && approvalOn_() ? "wait" : "yes";
+  const empty = s.rows.filter(function (g) { return !g.userId; })[0];
+  if (empty) {
+    sheet.getRange(empty.row, 4, 1, 2).setValues([[userId, consent]]);
+  } else {
+    const row = sheet.getLastRow() + 1;
+    sheet.getRange(row, 1, 1, 5).setNumberFormat("@").setValues([[s.id, s.name, "", userId, consent]]);
+  }
+  return { ok: true, studentId: s.id, name: name, consent: consent,
+    notify: s.others.filter(consenting_).map(function (g) { return g.userId; }) };
+}
+
+// Shared checks: valid user, not locked out, a real student. `counted` look-ups use the hourly
+// preview allowance so nobody can walk through student IDs to collect names.
+function lookupForGuardian_(userId, studentId, counted) {
+  userId = String(userId || "").trim();
+  const id = normStudentId_(studentId);
+  if (!/^U[0-9a-f]{32}$/i.test(userId)) return { ok: false, error: "bad_request" };
+  if (!id || id.toUpperCase() === SECURITY_ID) return { ok: false, error: "bad_student" };
+
+  const cache = CacheService.getScriptCache();
+  const failKey = "bindfail:" + userId;
+  const fails = Number(cache.get(failKey) || 0);
+  if (fails >= MAX_BIND_FAILURES) return { ok: false, error: "locked" };
+  if (counted) {
+    const lookKey = "preview:" + userId;
+    const looks = Number(cache.get(lookKey) || 0);
+    if (looks >= MAX_PREVIEWS) return { ok: false, error: "locked" };
+    cache.put(lookKey, String(looks + 1), 3600);
+  }
+
+  const rows = guardians_().filter(function (g) { return g.studentId === id; });
+  const known = student_(id);
+  const name = (known && known.found && known.name) || (rows.filter(function (g) { return g.name; })[0] || {}).name || "";
+  if (!(known && known.found) && !rows.length) {
+    cache.put(failKey, String(fails + 1), 3600);
+    return { ok: false, error: "not_found" };
+  }
+  return {
+    ok: true, id: id, name: name || id, rows: rows,
+    mine: rows.filter(function (g) { return g.userId === userId; })[0] || null,
+    others: rows.filter(function (g) { return g.userId && g.userId !== userId && g.consent !== "no"; }),
+  };
+}
+
+function approvalOn_() {
+  return String(PropertiesService.getScriptProperties().getProperty("GUARDIAN_APPROVAL") || "").toLowerCase() === "on";
+}
+
+function normStudentId_(s) {
+  const id = String(s || "").replace(/[\s\-]/g, "");
+  return /^[0-9A-Za-z]{4,20}$/.test(id) ? id : "";
+}
+
+// "นายสมชาย ใจดี" -> "สมชาย ใ•••": first name plus the first letter of the surname.
+function maskName_(full) {
+  const s = String(full || "").trim()
+    .replace(/^(นางสาว|นาย|นาง|น\.ส\.|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|Mr\.?|Mrs\.?|Ms\.?|Miss)\s*/i, "");
+  const parts = s.split(/\s+/).filter(String);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0];
+  return parts[0] + " " + Array.from(parts[parts.length - 1]).slice(0, 1).join("") + "•••";
 }
 
 // Run once from the editor (Run > generateBindCodes) to fill every empty bind_code cell with a
@@ -345,7 +460,7 @@ function generateBindCodes() {
     do {
       c = "";
       for (let i = 0; i < 6; i++) c += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-    } while (used[c]);
+    } while (used[c] || /^[0-9]+$/.test(c)); // all digits would look like a student ID
     used[c] = true;
     return [c];
   });
