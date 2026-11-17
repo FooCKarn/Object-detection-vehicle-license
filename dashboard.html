@@ -266,8 +266,13 @@ td.plate { font-family: var(--font-display); font-weight: 600; font-size: 15px; 
       render();
     } catch (err) {
       const msg = String(err.message || err);
+      const detail = msg.replace(/^unexpected reply from Apps Script \[\w+\] /, "");
       const hint = /APPS_SCRIPT_URL/.test(msg) ? "ยังไม่ได้ตั้งค่า APPS_SCRIPT_URL / APPS_SCRIPT_SECRET ใน Vercel"
-        : /new deployment/.test(msg) ? "Apps Script ยังเป็นเวอร์ชันเก่า: วาง Code.gs ใหม่แล้ว Deploy > Manage deployments > New version"
+        : /new deployment/.test(msg) ? "Apps Script ยังเป็นเวอร์ชันเก่า: วาง Code.gs ใหม่แล้ว Deploy > Manage deployments > แก้ไข (ดินสอ) > Version: New version > Deploy"
+        : /\[script_error\]/.test(msg) ? "โค้ดใน Apps Script มีข้อผิดพลาด (มักเกิดจากวาง Code.gs ซ้อนกับโค้ดเดิม หรือมีไฟล์ .gs สองไฟล์): ลบโค้ดเดิมทั้งหมด วาง Code.gs ใหม่ทั้งไฟล์ บันทึก แล้ว Deploy เป็น New version · รายละเอียด: " + detail
+        : /\[signin\]/.test(msg) ? "Apps Script ขอให้ล็อกอิน: ตั้ง Who has access เป็น Anyone ใน Manage deployments แล้ว Deploy ใหม่ · " + detail
+        : /\[not_found\]/.test(msg) ? "ไม่พบ Apps Script web app ตาม APPS_SCRIPT_URL (อาจลบ deployment หรือสร้าง deployment ใหม่ซึ่งได้ URL ใหม่): ใช้ Manage deployments > New version ใน deployment เดิม หรืออัปเดต APPS_SCRIPT_URL ใน Vercel · " + detail
+        : /unexpected reply/.test(msg) ? "Apps Script ตอบกลับไม่ใช่ข้อมูล JSON: " + detail
         : "โหลดข้อมูลไม่สำเร็จ: " + msg;
       notice(data ? hint + " (แสดงข้อมูลล่าสุดที่โหลดได้)" : hint, false);
       if (!data) $("stamp").textContent = "โหลดไม่สำเร็จ";

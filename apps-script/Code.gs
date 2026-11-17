@@ -32,11 +32,14 @@ const NOTIFY_QUIET_SECONDS = 600; // do not notify about the same student / plat
 const MAX_BIND_FAILURES = 5;      // wrong bind codes allowed per LINE user per hour
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  let lock = null;
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || "{}");
     if (!authorized_(body.secret)) return json_({ ok: false, error: "unauthorized" });
+    // The dashboard only reads, so it does not wait behind plate writes.
+    if (body.action === "summary") return json_(summary_(body));
+    lock = LockService.getScriptLock();
+    lock.waitLock(10000);
 
     switch (body.action) {
       case "bind": return json_(bind_(body.userId, body.code, false));
@@ -45,13 +48,12 @@ function doPost(e) {
       case "consent": return json_(setConsent_(body.userId, "yes"));
       case "unsubscribe": return json_(setConsent_(body.userId, "no"));
       case "lookup": return json_(lookup_(body));
-      case "summary": return json_(summary_(body));
       default: return json_(logReading_(body));
     }
   } catch (err) {
     return json_({ ok: false, error: String(err) });
   } finally {
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
   }
 }
 
