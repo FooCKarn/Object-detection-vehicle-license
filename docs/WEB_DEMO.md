@@ -72,10 +72,19 @@ link can see the summary.
 
 ## LINE notifications to guardians
 
-The OA's rich menu has two buttons, "ลงทะเบียน" and "ยกเลิกการแจ้งเตือน". Both open the LIFF page
-(`liff/index.html`). To register, a guardian types the 6-character bind code staff gave them and ticks
-the consent box; one tap binds their LINE account and turns notifications on. The cancel page lists the
-students they follow and stops all of them. `/api/liff` checks the LIFF ID token with LINE and takes the
+The OA's rich menu has two buttons, "ลงทะเบียน" and "ยกเลิกการแจ้งเตือน". Both open the same LIFF page
+(`liff/index.html`): the students this LINE account follows, each with its own "ยกเลิก" / "เปิดแจ้งเตือน"
+button (plus "ยกเลิกทั้งหมด"), and a box to add one more student. To add a student a guardian types
+only the **student ID** and taps "ถัดไป"; the page shows the student's masked name ("สมชาย ใ•••") and
+"ใช่ ลงทะเบียน" turns notifications on. A guardian with several children adds them one at a time, and
+a student can have up to 4 LINE accounts. The old 6-character bind code still works through the
+"มีรหัสผูกบัญชีจากวิทยาลัย" link (guards use it for the `SECURITY` row).
+
+Because anyone who knows a student ID could try to sign up, the page only ever shows masked names,
+one LINE account may look up 10 IDs and get 5 wrong per hour, and when a second account joins a student
+the existing guardians get a LINE message saying so. Set the Apps Script property
+`GUARDIAN_APPROVAL` = `on` to make every account after the first wait (`consent` = `wait`) until staff
+change it to `yes` in the sheet. `/api/liff` checks the LIFF ID token with LINE and takes the
 userId from it, so nobody types a LINE ID and a page cannot act for someone else's account. A short
 confirmation message is pushed to the chat after each change.
 
@@ -92,9 +101,9 @@ locked out after 5 wrong codes in an hour, on the page and in the chat alike.
 
 Header in row 1: `student_id | student_name | bind_code | line_user_id | consent`
 
-- Staff fill `student_id` (same value as in `REGISTER_VEHICLE`) and `student_name`; one row per guardian.
-- Format the `bind_code` column as Plain text, then run `generateBindCodes` from the Apps Script editor to fill the empty codes. Give each guardian their own code.
-- `line_user_id` and `consent` (`pending` / `yes` / `no`) are filled by the system. Do not edit them by hand unless you are fixing a mistake.
+- One row per (student, LINE account). Guardians who register by student ID get a row added (or fill an empty row staff made for that student), so staff do not have to pre-fill anything; the ID is checked against the `Student` sheet.
+- `bind_code` is optional. To hand out codes anyway, format the column as Plain text and run `generateBindCodes`.
+- `line_user_id` and `consent` (`pending` / `yes` / `no` / `wait`) are filled by the system. Change `wait` to `yes` to approve an extra guardian, or delete a row to remove a LINE account that should not get alerts.
 - A row with `student_id` = `SECURITY` receives the alerts. A guard registers on the same page with that row's bind code.
 
 ### One-time setup
