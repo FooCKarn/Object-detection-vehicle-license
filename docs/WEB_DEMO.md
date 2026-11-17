@@ -54,6 +54,22 @@ The page shows "บันทึกลง Google Sheet" next to the history table
 Note: `/api/log` itself is still open to anyone who can reach the site, so keep student or parent
 personal data out of this sheet's log and out of any public demo.
 
+## Dashboard (`dashboard.html`)
+
+The "📊 Dashboard สรุปผล" link at the top of the page opens a summary of the `LOG` sheet: total
+readings, today vs yesterday, passed (`registered`) vs not passed (`unregistered` / `blocked` /
+`expired`), distinct plates, a per-day chart (per-hour for "วันนี้"), the busiest hours, the
+not-passed plates seen most often, and the 30 newest readings with student name and room. Ranges:
+วันนี้ / 7 วัน / 30 วัน. It refreshes every minute.
+
+Data comes from `/api/summary`, which calls the script's `summary` action (read-only, last 30 days).
+After updating `Code.gs`, deploy a new version of the web app or the dashboard says the Apps Script
+is outdated.
+
+The log holds plates and student names, so set `DASHBOARD_KEY` in Vercel (any password) to
+protect it: the dashboard then asks for that password once per browser. Without it, anyone with the
+link can see the summary.
+
 ## LINE notifications to guardians
 
 The OA's rich menu has two buttons, "ลงทะเบียน" and "ยกเลิกการแจ้งเตือน". Both open the LIFF page

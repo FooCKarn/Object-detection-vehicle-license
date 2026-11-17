@@ -45,6 +45,7 @@ function doPost(e) {
       case "consent": return json_(setConsent_(body.userId, "yes"));
       case "unsubscribe": return json_(setConsent_(body.userId, "no"));
       case "lookup": return json_(lookup_(body));
+      case "summary": return json_(summary_(body));
       default: return json_(logReading_(body));
     }
   } catch (err) {
@@ -82,6 +83,34 @@ function lookup_(body) {
   if (!plate) return { ok: false, error: "plate is required" };
   const checked = check_(plate, clean_(body.province, 40));
   return { ok: true, result: checked.result, student: student_(checked.ownerId) };
+}
+
+// LOG rows for the dashboard page: every reading from the last `days` days (1-90), oldest first,
+// as [id, "yyyy-MM-dd HH:mm:ss", license, province, result, studentId], plus student details for
+// the newest readings only. Read-only: nothing is logged and nobody is notified.
+const SUMMARY_MAX_DAYS = 90;
+const SUMMARY_RECENT = 30;
+function summary_(body) {
+  const days = Math.max(1, Math.min(SUMMARY_MAX_DAYS, Math.floor(Number(body.days) || 30)));
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
+  const from = Utilities.formatDate(new Date(Date.now() - (days - 1) * 86400000), TIME_ZONE, "yyyy-MM-dd");
+  const rows = [];
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues().forEach(function (r) {
+      if (!r[2]) return;
+      const time = r[1] instanceof Date ? Utilities.formatDate(r[1], TIME_ZONE, "yyyy-MM-dd HH:mm:ss") : String(r[1] || "").trim();
+      if (time.slice(0, 10) < from) return;
+      rows.push([Number(r[0]) || 0, time, String(r[2]), String(r[3] || ""), String(r[4] || "").trim().toLowerCase(),
+        String(r[5] || "").trim()]);
+    });
+  }
+  const students = {};
+  rows.slice(-SUMMARY_RECENT).forEach(function (r) {
+    if (r[5] && !(r[5] in students)) students[r[5]] = student_(r[5]);
+  });
+  return { ok: true, now: Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm:ss"), from: from, days: days,
+    rows: rows, students: students };
 }
 
 // Who should hear about this reading. LINE user ids go back to the Vercel function, which holds
