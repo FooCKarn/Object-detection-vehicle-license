@@ -59,7 +59,7 @@ ul.students li button { width: auto; min-height: 40px; padding: 8px 14px; font-s
 .confirm-box .big { font: 700 22px/1.3 var(--font-display); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 button.link { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 4px; min-height: 0; font-weight: 400; font-size: 14px; }
-.msg { margin: 0; padding: 12px; border-radius: 8px; border: 1px solid var(--line); }
+.msg { margin: 0; padding: 12px; border-radius: 8px; border: 1px solid var(--line); white-space: pre-line; }
 .msg.ok { border-color: var(--ok); color: var(--ok); }
 .msg.err { border-color: var(--warn); color: var(--warn); }
 .muted { color: var(--muted); margin: 0; font-size: 14px; }
@@ -227,8 +227,13 @@ async function refresh() {
   return true;
 }
 
-function done(text) {
-  message(text, "ok");
+// d.pushed === false: the server could not send the LINE confirmation, which almost always means
+// this account has not added (or has blocked) the OA, so alerts would not arrive either.
+async function done(text, d) {
+  let warn = d && d.pushed === false;
+  try { if (!warn && liff.isInClient()) warn = !(await liff.getFriendship()).friendFlag; } catch { /* not linked */ }
+  message(warn ? text + "\n\n⚠️ แต่ยังส่งข้อความทาง LINE ไม่ได้ กรุณาเพิ่มบัญชี V-Gate เป็นเพื่อน (หรือเลิกบล็อก) จึงจะได้รับแจ้งเตือน" : text,
+    warn ? "err" : "ok");
   show("close", liff.isInClient());
 }
 
@@ -238,7 +243,8 @@ async function change(action, s) {
   if (d.error === "redirecting") return;
   if (!d.ok) return message(errorText(d), "err");
   await refresh();
-  done(action === "cancel" ? `ยกเลิกการแจ้งเตือนของ ${s.name} แล้ว` : `เปิดรับแจ้งเตือนของ ${s.name} แล้ว`);
+  done(action === "cancel" ? `ยกเลิกการแจ้งเตือนของ ${s.name} แล้ว` : `เปิดรับแจ้งเตือนของ ${s.name} แล้ว`,
+    action === "cancel" ? null : d);
 }
 
 $("use-code").addEventListener("click", () => {
@@ -310,7 +316,7 @@ $("ok").addEventListener("click", () => busy($("ok"), async () => {
   await refresh();
   done(d.consent === "wait"
     ? `ส่งคำขอแล้ว รอวิทยาลัยอนุมัติ จากนั้นจะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย`
-    : `ลงทะเบียนสำเร็จ จะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย มีบุตรหลานอีกคน กรอกรหัสเพิ่มได้เลย`);
+    : `ลงทะเบียนสำเร็จ จะแจ้งเตือนเมื่อ ${d.name} เข้า-ออกวิทยาลัย มีบุตรหลานอีกคน กรอกรหัสเพิ่มได้เลย`, d);
 }));
 
 $("cancel-all").addEventListener("click", () => busy($("cancel-all"), async () => {

@@ -41,12 +41,18 @@ function describeHtml(upstream, text) {
 // (including when LINE_CHANNEL_ACCESS_TOKEN is not set).
 async function lineSend(kind, body) {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (!token) return false;
+  if (!token) {
+    console.error(`LINE ${kind}: LINE_CHANNEL_ACCESS_TOKEN is not set`);
+    return false;
+  }
   const r = await fetch(`${LINE_API}/${kind}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
+  // Shows up in Vercel > Logs: 401 = wrong/expired token, 400 "Failed to send messages" = the user
+  // has not added the OA as a friend (or blocked it), or the userId is from another provider.
+  if (!r.ok) console.error(`LINE ${kind} failed: HTTP ${r.status} ${(await r.text().catch(() => "")).slice(0, 300)}`);
   return r.ok;
 }
 
