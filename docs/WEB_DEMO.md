@@ -77,7 +77,7 @@ The OA's rich menu has two buttons, "ลงทะเบียน" and "ยกเ
 button (plus "ยกเลิกทั้งหมด"), and a box to add one more student. To add a student a guardian types
 only the **student ID** and taps "ถัดไป"; the page shows the student's masked name ("สมชาย ใ•••") and
 "ใช่ ลงทะเบียน" turns notifications on. A guardian with several children adds them one at a time, and
-a student can have up to 4 LINE accounts. The old 6-character bind code still works through the
+a student can have up to 4 LINE accounts. Student IDs must be 11 digits, like the `student_id` column of the `Student` sheet. The old 6-character bind code still works through the
 "มีรหัสผูกบัญชีจากวิทยาลัย" link (guards use it for the `SECURITY` row).
 
 Because anyone who knows a student ID could try to sign up, the page only ever shows masked names,

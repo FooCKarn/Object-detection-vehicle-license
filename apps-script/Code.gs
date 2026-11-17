@@ -5,7 +5,8 @@
 //   status: active | blocked   (anything else counts as not allowed)
 //   province may be left empty to match any province; expired_date may be left empty for no expiry.
 // "Student" sheet (also read as "Data Student"): every student in the college. Columns are found
-//   by header: student_id, GroupCode, กลุ่มเรียน, student_name.
+//   by header: student_id, GroupCode, กลุ่มเรียน, and the name as either one student_name column or
+//   a "name" header over three cells (prefix | first name | surname), as in the college export.
 // "GroupCode" sheet: one row per study group. Columns found by header: รหัสกลุ่มเรียน,
 //   ชื่อกลุ่มเรียน, ชื่อย่อกลุ่มเรียน, ครูที่ปรึกษา. A student's GroupCode points at รหัสกลุ่มเรียน.
 // "STUDENT_GUARDIAN" sheet:  student_id | student_name | bind_code | line_user_id | consent
@@ -38,7 +39,8 @@ const CACHE_SECONDS = 60;
 const NOTIFY_QUIET_SECONDS = 600; // do not notify about the same student / plate again within 10 minutes
 const MAX_BIND_FAILURES = 5;      // wrong bind codes / unknown student IDs allowed per LINE user per hour
 const MAX_PREVIEWS = 10;          // student ID look-ups allowed per LINE user per hour
-const MAX_GUARDIANS = 4;          // LINE accounts per student (not counting cancelled ones)
+const MAX_GUARDIANS = 4;
+const STUDENT_ID_RE = /^[0-9]{11}$/; // student IDs in the Student sheet are 11 digits, e.g. 69319100003          // LINE accounts per student (not counting cancelled ones)
 
 function doPost(e) {
   let lock = null;
@@ -226,7 +228,8 @@ function student_(id) {
         const g = groups_()[code] || {};
         out = {
           id: id, found: true,
-          name: col("student_name"),
+          name: col("student_name") || (head["name"] ? row.slice(head["name"] - 1, head["name"] + 2)
+            .map(function (v) { return String(v || "").trim(); }).filter(String).join(" ") : ""),
           group: code,
           room: [col("กลุ่มเรียน"), g.short].filter(String).join(" · "),
           groupName: g.name || "",
@@ -431,7 +434,7 @@ function approvalOn_() {
 
 function normStudentId_(s) {
   const id = String(s || "").replace(/[\s\-]/g, "");
-  return /^[0-9A-Za-z]{4,20}$/.test(id) ? id : "";
+  return STUDENT_ID_RE.test(id) ? id : "";
 }
 
 // "นายสมชาย ใจดี" -> "สมชาย ใ•••": first name plus the first letter of the surname.

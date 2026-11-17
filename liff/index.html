@@ -84,7 +84,7 @@ button.link { background: none; border: 0; color: var(--muted); text-decoration:
   <form class="card" id="add" hidden>
     <h2 id="add-title">เพิ่มนักเรียน</h2>
     <label><span id="id-label">รหัสนักศึกษา</span>
-      <input type="text" id="sid" maxlength="20" autocomplete="off" spellcheck="false" inputmode="numeric" required>
+      <input type="text" id="sid" maxlength="11" placeholder="เช่น 69319100003" autocomplete="off" spellcheck="false" inputmode="numeric" required>
     </label>
     <button class="primary" type="submit" id="next">ถัดไป</button>
     <button class="link" type="button" id="use-code">มีรหัสผูกบัญชีจากวิทยาลัย (เช่น เจ้าหน้าที่ รปภ.)</button>
@@ -116,7 +116,7 @@ button.link { background: none; border: 0; color: var(--muted); text-decoration:
 // student's masked name, "ใช่ ลงทะเบียน" confirms.
 const ERRORS = {
   not_found: "ไม่พบรหัสนี้ในระบบ กรุณาตรวจสอบอีกครั้ง",
-  bad_student: "รหัสนักศึกษาไม่ถูกต้อง กรอกเฉพาะตัวเลขหรือตัวอักษร",
+  bad_student: "รหัสนักศึกษาต้องเป็นตัวเลข 11 หลัก เช่น 69319100003",
   bad_code: "รหัสผูกบัญชีต้องเป็นตัวอักษรหรือตัวเลข 6 หลัก",
   locked: "ลองหลายครั้งเกินไป กรุณาลองใหม่ในอีก 1 ชั่วโมง หรือติดต่อวิทยาลัย",
   already_bound: "รหัสนี้ถูกผูกกับบัญชี LINE อื่นแล้ว กรุณาติดต่อวิทยาลัย",
@@ -246,10 +246,16 @@ $("use-code").addEventListener("click", () => {
   const box = $("sid");
   box.value = "";
   box.inputMode = useCode ? "text" : "numeric";
-  box.maxLength = useCode ? 6 : 20;
+  box.maxLength = useCode ? 6 : 11;
+  box.placeholder = useCode ? "" : "เช่น 69319100003";
   $("id-label").textContent = useCode ? "รหัสผูกบัญชี 6 หลัก" : "รหัสนักศึกษา";
   $("use-code").textContent = useCode ? "กรอกรหัสนักศึกษาแทน" : "มีรหัสผูกบัญชีจากวิทยาลัย (เช่น เจ้าหน้าที่ รปภ.)";
   box.focus();
+});
+
+// Student IDs are digits only: drop anything else as it is typed or pasted.
+$("sid").addEventListener("input", () => {
+  if (!useCode) $("sid").value = $("sid").value.replace(/\D/g, "").slice(0, 11);
 });
 
 // Step 1 -> 2
@@ -267,7 +273,7 @@ $("add").addEventListener("submit", (e) => {
       show("c-note", false);
       return showStep(2);
     }
-    if (!/^[0-9A-Za-z]{4,20}$/.test(value)) return message(ERRORS.bad_student, "err");
+    if (!/^[0-9]{11}$/.test(value)) return message(ERRORS.bad_student, "err");
     const d = await call("preview", { studentId: value });
     if (d.error === "redirecting") return;
     if (!d.ok) return message(errorText(d), "err");

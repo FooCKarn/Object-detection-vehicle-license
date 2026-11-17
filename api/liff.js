@@ -47,7 +47,7 @@ function confirmation(action, data) {
 const joinedNotice = (name) => `แจ้งเพื่อทราบ: มีบัญชี LINE อีก 1 บัญชีลงทะเบียนรับแจ้งเตือนการเข้า-ออกวิทยาลัยของ ${name}` +
   "\nหากไม่ใช่ผู้ปกครองหรือคนในครอบครัว กรุณาแจ้งวิทยาลัยเพื่อลบออก";
 
-// Student IDs are letters and digits; people paste them with spaces or dashes.
+// Student IDs are 11 digits (as in the Student sheet); people paste them with spaces or dashes.
 const cleanStudentId = (v) => String(v || "").replace(/[\s-]/g, "");
 
 module.exports = async (req, res) => {
@@ -69,7 +69,7 @@ module.exports = async (req, res) => {
   if (!SCRIPT_ACTION[action]) return res.status(400).json({ ok: false, error: "bad_request" });
   const code = String(body.code || "").trim().toUpperCase();
   const studentId = cleanStudentId(body.studentId);
-  if (studentId && !/^[0-9A-Za-z]{4,20}$/.test(studentId)) return res.status(400).json({ ok: false, error: "bad_student" });
+  if (studentId && !/^[0-9]{11}$/.test(studentId)) return res.status(400).json({ ok: false, error: "bad_student" });
   if (action === "preview" && !studentId) return res.status(400).json({ ok: false, error: "bad_student" });
   if (action === "register" && !studentId && !/^[A-Z0-9]{6}$/.test(code)) return res.status(400).json({ ok: false, error: "bad_code" });
 
