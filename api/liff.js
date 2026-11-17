@@ -98,10 +98,13 @@ module.exports = async (req, res) => {
   }
 
   const text = confirmation(action, data);
-  try { if (text) await linePush(userId, text); } catch { /* the page shows the result anyway */ }
+  // pushed: true = LINE took the confirmation, false = it did not (the page then tells the guardian to
+  // add the OA as a friend), null = nothing to send.
+  let pushed = null;
+  if (text) { try { pushed = await linePush(userId, text); } catch { pushed = false; } }
   if (action === "register" && Array.isArray(data.notify)) {
     await Promise.all(data.notify.filter((id) => id !== userId)
       .map((id) => linePush(id, joinedNotice(data.name)).catch(() => false)));
   }
-  return res.status(200).json({ ok: true, name: data.name, names: data.names, consent: data.consent });
+  return res.status(200).json({ ok: true, name: data.name, names: data.names, consent: data.consent, pushed });
 };
